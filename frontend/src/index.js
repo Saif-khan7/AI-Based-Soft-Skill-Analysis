@@ -3,8 +3,8 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import { ClerkProvider } from '@clerk/clerk-react';
 
+// Load from .env
 const clerkPublishableKey = process.env.REACT_APP_CLERK_PUBLISHABLE_KEY;
-
 if (!clerkPublishableKey) {
   throw new Error("Missing Clerk publishable key in .env file");
 }

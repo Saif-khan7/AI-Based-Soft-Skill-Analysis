@@ -1,4 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
+import { useUser } from '@clerk/clerk-react';
 
 function Interview() {
   const videoRef = useRef(null);
@@ -12,6 +13,10 @@ function Interview() {
   const [isRecording, setIsRecording] = useState(false);
   const [audioResult, setAudioResult] = useState(null);
   const audioChunksRef = useRef([]);
+
+  const [generatedQuestions, setGeneratedQuestions] = useState([]); // New state
+
+  const { user } = useUser();
 
   useEffect(() => {
     return () => {
@@ -141,10 +146,39 @@ function Interview() {
     setAudioRecorder(null);
   };
 
+  // --------------- NEW: Generate Interview Questions ---------------
+  const handleGenerateQuestions = async () => {
+    if (!user || !user.primaryEmailAddress) {
+      alert("No user email found; please sign in first.");
+      return;
+    }
+    try {
+      const res = await fetch("http://localhost:5000/api/generateQuestions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Clerk-User-Email": user.primaryEmailAddress.emailAddress
+        }
+      });
+      const data = await res.json();
+      if (data.questions) {
+        setGeneratedQuestions(data.questions);
+      } else if (data.error) {
+        alert(data.error);
+      } else {
+        alert("Unknown error generating questions.");
+      }
+    } catch (err) {
+      console.error("Error generating questions:", err);
+      alert("Failed to generate questions.");
+    }
+  };
+
   return (
     <div style={{ textAlign: 'center', marginTop: '20px' }}>
       <h1>Interview Session</h1>
-      
+
+      {/* 1) CONTINUOUS EMOTION TRACKING */}
       <section style={{ marginBottom: '30px' }}>
         <h2>Continuous Emotion Tracking (DeepFace)</h2>
         <video ref={videoRef} style={{ width: '60%', border: '2px solid #ccc' }} />
@@ -177,6 +211,7 @@ function Interview() {
         )}
       </section>
 
+      {/* 2) SPEECH ANALYSIS (WHISPER) */}
       <section>
         <h2>Speech Analysis (Whisper)</h2>
         {!isRecording ? (
@@ -192,6 +227,26 @@ function Interview() {
             <p><strong>Filler Rate:</strong> {audioResult.fillerRate}</p>
             <p><strong>Filler Count:</strong> {audioResult.fillerCount}</p>
             <p><strong>Filler Words Used:</strong> {JSON.stringify(audioResult.fillerWordsUsed)}</p>
+          </div>
+        )}
+      </section>
+
+      {/* 3) QUESTION GENERATION */}
+      <section style={{ marginTop: '40px' }}>
+        <h2>Question Generation</h2>
+        <button onClick={handleGenerateQuestions}>
+          Generate Interview Questions
+        </button>
+        {generatedQuestions.length > 0 && (
+          <div style={{ marginTop: '20px' }}>
+            <h4>Generated Questions:</h4>
+            <ul style={{ textAlign: 'left', margin: '0 auto', maxWidth: '500px' }}>
+              {generatedQuestions.map((q, idx) => (
+                <li key={idx} style={{ marginBottom: '10px' }}>
+                  {q}
+                </li>
+              ))}
+            </ul>
           </div>
         )}
       </section>

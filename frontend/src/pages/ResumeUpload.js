@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useUser } from '@clerk/clerk-react';
 
 function ResumeUpload() {
   const navigate = useNavigate();
+  const { user } = useUser();
   const [resumeFile, setResumeFile] = useState(null);
   const [jobDescription, setJobDescription] = useState("");
   const [analysis, setAnalysis] = useState("");
@@ -33,8 +35,12 @@ function ResumeUpload() {
         formData.append("jobDescription", jobDescription);
       }
 
+      // Include the user's email from Clerk in the headers
       const res = await fetch("http://localhost:5000/api/resume", {
         method: "POST",
+        headers: {
+          "Clerk-User-Email": user.primaryEmailAddress.emailAddress
+        },
         body: formData
       });
       const data = await res.json();
