@@ -1,5 +1,6 @@
+// src/App.js
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route} from 'react-router-dom';
 import { 
   SignedIn, 
   SignedOut, 
@@ -12,12 +13,14 @@ import {
 
 import Dashboard from './pages/Dashboard';
 import ResumeUpload from './pages/ResumeUpload';
-import Interview from './pages/Interview';
+import Interview from './pages/Interview';        // Old test interview
+import MainInterview from './pages/MainInterview';// New main interview
+import Analysis from './pages/Analysis';
 
 function App() {
   return (
     <Router>
-      {/* Optional simple header */}
+      {/* Header with brand name & sign-in logic */}
       <header style={{ 
         display: 'flex', 
         justifyContent: 'space-between', 
@@ -37,14 +40,14 @@ function App() {
       </header>
 
       <Routes>
-        {/* 1) Public route: Dashboard is always visible */}
+        {/* 1) Public route for Dashboard */}
         <Route path="/" element={<Dashboard />} />
 
-        {/* 2) Clerk’s built-in sign-in and sign-up pages */}
+        {/* 2) Clerk’s built-in sign-in & sign-up pages */}
         <Route path="/sign-in/*" element={<SignIn routing="path" path="/sign-in" />} />
         <Route path="/sign-up/*" element={<SignUp routing="path" path="/sign-up" />} />
 
-        {/* 3) Protected routes: resume & interview require sign-in */}
+        {/* 3) Protected routes: require SignedIn */}
         <Route 
           path="/resume" 
           element={
@@ -54,15 +57,31 @@ function App() {
           }
         />
         <Route 
-          path="/interview" 
+          path="/Interview" 
           element={
             <SignedIn>
               <Interview />
             </SignedIn>
           }
         />
+        <Route 
+          path="/mainInterview" 
+          element={
+            <SignedIn>
+              <MainInterview />
+            </SignedIn>
+          }
+        />
+        <Route 
+          path="/analysis" 
+          element={
+            <SignedIn>
+              <Analysis />
+            </SignedIn>
+          }
+        />
 
-        {/* 4) Catch-all: if not signed in, Clerk will redirect to /sign-in */}
+        {/* 4) Catch-all -> if not signed in, redirect to /sign-in */}
         <Route
           path="*"
           element={

@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useUser } from '@clerk/clerk-react';
 import { useNavigate } from 'react-router-dom';
 
-function Interview() {
+function MainInterview() {
   const navigate = useNavigate();
   const { user } = useUser();
 
@@ -21,7 +21,7 @@ function Interview() {
   const [isRecording, setIsRecording] = useState(false);
 
   useEffect(() => {
-    // Cleanup on unmount
+    // Cleanup
     return () => {
       stopVideo();
       stopCapturing();
@@ -30,8 +30,8 @@ function Interview() {
     // eslint-disable-next-line
   }, []);
 
-  // ========== 1) Start Interview =============
-  const handleStartInterview = async () => {
+  // 1) Start the Interview
+  const handleStartInterview = async() => {
     if (!user?.primaryEmailAddress) {
       alert("Please sign in first");
       return;
@@ -46,13 +46,11 @@ function Interview() {
       const data = await res.json();
       if (data.interviewId) {
         setInterviewId(data.interviewId);
-        if (Array.isArray(data.questions)) {
-          setQuestions(data.questions);
-        } else {
-          setQuestions([data.questions]);
-        }
+
+        // data.questions is presumably an array: e.g. ["Q1","Q2","Q3","Q4","Q5"]
+        setQuestions(Array.isArray(data.questions) ? data.questions : [data.questions]);
         setCurrentQIndex(0);
-        alert("Interview started with skill-based questions!");
+        alert("Interview started!");
       } else {
         alert(data.error || "Failed to start interview");
       }
@@ -62,7 +60,7 @@ function Interview() {
     }
   };
 
-  // ========== 2) Video & Emotion Tracking Logic =============
+  // 2) Video & Emotion
   const startVideo = async () => {
     try {
       const userStream = await navigator.mediaDevices.getUserMedia({ video: true });
@@ -99,10 +97,11 @@ function Interview() {
     canvas.width = videoRef.current.videoWidth;
     canvas.height = videoRef.current.videoHeight;
     const ctx = canvas.getContext("2d");
-    ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(videoRef.current,0,0, canvas.width,canvas.height);
     const base64Image = canvas.toDataURL("image/jpeg");
 
     try {
+      // 1) Analyze emotion
       const resp = await fetch("http://localhost:5000/analyzeFrame", {
         method:"POST",
         headers:{"Content-Type":"application/json"},
@@ -114,6 +113,7 @@ function Interview() {
         setEmotion(data.dominant_emotion);
         setProcessedImage(data.image);
 
+        // 2) Log emotion distribution to timeline, if we have an interview
         if (interviewId && user?.primaryEmailAddress && data.emotion_distribution) {
           await fetch("http://localhost:5000/api/logEmotion", {
             method:"POST",
@@ -133,7 +133,7 @@ function Interview() {
     }
   };
 
-  // ========== 3) Audio Recording => /api/submitAnswer ============
+  // 3) Submit Answer
   const handleStartRecording = async() => {
     try {
       const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -159,7 +159,8 @@ function Interview() {
             body: formData
           });
           const data = await res.json();
-          if (data.message === "Answer submitted") {
+          console.log("Answer result:", data);
+          if (data.message==="Answer submitted") {
             alert("Answer recorded successfully!");
           } else {
             alert(data.error || "Error submitting answer");
@@ -174,7 +175,6 @@ function Interview() {
       setIsRecording(true);
     } catch(err) {
       console.error("Mic error:", err);
-      alert("Could not access microphone.");
     }
   };
 
@@ -187,21 +187,17 @@ function Interview() {
     setAudioRecorder(null);
   };
 
-  // ========== 4) Next / Finish Interview ===============
+  // Move to next question
   const handleNextQuestion = () => {
-    // If not on last question, increment
     if (currentQIndex < questions.length - 1) {
       setCurrentQIndex(currentQIndex + 1);
     } else {
-      alert("You are on the final question. You can finish now.");
+      alert("All questions answered, finalize interview");
     }
   };
 
-  const handleFinishInterview = async() => {
-    if (!interviewId) {
-      alert("No interview in progress to finalize!");
-      return;
-    }
+  // 4) Finalize
+  const handleFinalizeInterview = async() => {
     try {
       const res = await fetch("http://localhost:5000/api/finalizeInterview", {
         method:"POST",
@@ -209,40 +205,23 @@ function Interview() {
           "Content-Type":"application/json",
           "Clerk-User-Email": user.primaryEmailAddress.emailAddress
         },
-        body: JSON.stringify({ interviewId })
+        body: JSON.stringify({interviewId})
       });
       const data = await res.json();
-      if (data.message === "Interview finalized") {
+      if (data.message==="Interview finalized") {
+        // go to analysis page
         navigate("/analysis", { state:{ interviewId }});
       } else {
         alert(data.error || "Error finalizing interview");
       }
     } catch(err) {
       console.error("Finalize error:", err);
-      alert("Could not finalize interview.");
     }
   };
 
-  // Render a single question (string or object)
-  const renderQuestion = (qItem) => {
-    if (!qItem) return null;
-    if (typeof qItem === "string") {
-      return <p>{qItem}</p>;
-    } else if (typeof qItem === "object") {
-      return (
-        <div>
-          <p>{qItem.question}</p>
-          {qItem.skill_tested && <p>Skills: {qItem.skill_tested}</p>}
-        </div>
-      );
-    } else {
-      return <p>{String(qItem)}</p>;
-    }
-  };
-
-  return (
+  return(
     <div style={{ textAlign:'center', marginTop:'20px'}}>
-      <h1>Skill-Based Interview</h1>
+      <h1>Main Interview</h1>
 
       {/* Start Interview */}
       {!interviewId && (
@@ -253,43 +232,28 @@ function Interview() {
         <>
           <p>Interview ID: {interviewId}</p>
 
-          {/* Show Q if we have them */}
+          {/* Show question */}
           {questions.length > 0 && currentQIndex < questions.length && (
             <div>
               <h3>Question {currentQIndex + 1} of {questions.length}</h3>
-              {renderQuestion(questions[currentQIndex])}
+              <p>{questions[currentQIndex]}</p>
 
               {!isRecording ? (
-                <button onClick={handleStartRecording}>
-                  Record Answer
-                </button>
+                <button onClick={handleStartRecording}>Record Answer</button>
               ) : (
-                <button onClick={handleStopRecording}>
-                  Stop Recording
-                </button>
+                <button onClick={handleStopRecording}>Stop Recording</button>
               )}
 
-              {/* If not last question, show Next; if last question, show note */}
-              {currentQIndex < questions.length - 1 ? (
-                <button onClick={handleNextQuestion} style={{ marginLeft: '10px' }}>
-                  Next Question
-                </button>
-              ) : (
-                <p style={{ marginTop: '15px' }}>
-                  This is the final question. You can finish when ready.
-                </p>
-              )}
+              <button onClick={handleNextQuestion} style={{ marginLeft:'10px' }}>
+                Next Question
+              </button>
             </div>
           )}
 
-          {/* If we've displayed all questions (i.e. currentQIndex >= length),
-              or the user is on the last question, show Finish Interview */}
-          {currentQIndex >= questions.length - 1 && (
-            <div style={{ marginTop:'20px' }}>
-              <button onClick={handleFinishInterview} style={{ fontWeight: 'bold' }}>
-                Finish Interview
-              </button>
-            </div>
+          {currentQIndex >= questions.length && (
+            <button onClick={handleFinalizeInterview}>
+              Finalize Interview
+            </button>
           )}
         </>
       )}
@@ -315,15 +279,12 @@ function Interview() {
       </div>
 
       <div style={{ marginTop:'20px' }}>
-        <video 
-          ref={videoRef} 
-          style={{ width:'300px', border:'1px solid #ccc' }} 
-        />
+        <video ref={videoRef} style={{ width:'300px', border:'1px solid #ccc' }} />
         <p>Current Emotion: {emotion}</p>
         {processedImage && (
-          <img
-            src={processedImage}
-            alt="Processed"
+          <img 
+            src={processedImage} 
+            alt="Processed" 
             style={{ width:'300px', border:'1px solid #ccc', marginTop:'10px'}}
           />
         )}
@@ -332,4 +293,4 @@ function Interview() {
   );
 }
 
-export default Interview;
+export default MainInterview;
