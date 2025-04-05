@@ -30,7 +30,7 @@ function Interview() {
     // eslint-disable-next-line
   }, []);
 
-  // ========== 1) Start Interview =============
+  // Start Interview => calls /api/startInterview
   const handleStartInterview = async () => {
     if (!user?.primaryEmailAddress) {
       alert("Please sign in first");
@@ -62,7 +62,7 @@ function Interview() {
     }
   };
 
-  // ========== 2) Video & Emotion Tracking Logic =============
+  // Video & Emotion Tracking
   const startVideo = async () => {
     try {
       const userStream = await navigator.mediaDevices.getUserMedia({ video: true });
@@ -133,7 +133,7 @@ function Interview() {
     }
   };
 
-  // ========== 3) Audio Recording => /api/submitAnswer ============
+  // Audio => /api/submitAnswer
   const handleStartRecording = async() => {
     try {
       const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -161,6 +161,11 @@ function Interview() {
           const data = await res.json();
           if (data.message === "Answer submitted") {
             alert("Answer recorded successfully!");
+            
+            // Optional: Show rating from Gemini assessment, if it exists
+            if (data.assessment) {
+              alert(`Rating: ${data.assessment.rating}\nExplanation: ${data.assessment.explanation}\nIdeal Answer: ${data.assessment.ideal_answer}`);
+            }
           } else {
             alert(data.error || "Error submitting answer");
           }
@@ -187,9 +192,8 @@ function Interview() {
     setAudioRecorder(null);
   };
 
-  // ========== 4) Next / Finish Interview ===============
+  // Next or finishing the interview
   const handleNextQuestion = () => {
-    // If not on last question, increment
     if (currentQIndex < questions.length - 1) {
       setCurrentQIndex(currentQIndex + 1);
     } else {
@@ -223,7 +227,7 @@ function Interview() {
     }
   };
 
-  // Render a single question (string or object)
+  // Render a single question
   const renderQuestion = (qItem) => {
     if (!qItem) return null;
     if (typeof qItem === "string") {
@@ -244,7 +248,6 @@ function Interview() {
     <div style={{ textAlign:'center', marginTop:'20px'}}>
       <h1>Skill-Based Interview</h1>
 
-      {/* Start Interview */}
       {!interviewId && (
         <button onClick={handleStartInterview}>Start Interview</button>
       )}
@@ -253,7 +256,6 @@ function Interview() {
         <>
           <p>Interview ID: {interviewId}</p>
 
-          {/* Show Q if we have them */}
           {questions.length > 0 && currentQIndex < questions.length && (
             <div>
               <h3>Question {currentQIndex + 1} of {questions.length}</h3>
@@ -269,7 +271,6 @@ function Interview() {
                 </button>
               )}
 
-              {/* If not last question, show Next; if last question, show note */}
               {currentQIndex < questions.length - 1 ? (
                 <button onClick={handleNextQuestion} style={{ marginLeft: '10px' }}>
                   Next Question
@@ -282,8 +283,6 @@ function Interview() {
             </div>
           )}
 
-          {/* If we've displayed all questions (i.e. currentQIndex >= length),
-              or the user is on the last question, show Finish Interview */}
           {currentQIndex >= questions.length - 1 && (
             <div style={{ marginTop:'20px' }}>
               <button onClick={handleFinishInterview} style={{ fontWeight: 'bold' }}>
