@@ -29,8 +29,8 @@ ChartJS.register(
 function Analysis() {
   const { user } = useUser();
   const location = useLocation();
-  const [analysisData, setAnalysisData] = useState(null);
 
+  const [analysisData, setAnalysisData] = useState(null);
   const [emotionChartData, setEmotionChartData] = useState(null);
 
   useEffect(() => {
@@ -41,10 +41,11 @@ function Analysis() {
       }
       const interviewId = location.state?.interviewId;
       if(!interviewId) {
-        console.warn("No interviewId in location.state - can't fetch analysis");
+        console.warn("No interviewId in route state - can't fetch analysis");
         return;
       }
       try {
+        // This route returns final_summary + emotionTimeline
         const res = await fetch("http://localhost:5000/api/getAnalysis", {
           method: "POST",
           headers: {
@@ -66,15 +67,15 @@ function Analysis() {
     fetchAnalysis();
   }, [user, location.state]);
 
-  // Build the chart data once we have emotionTimeline
+  // build chart data
   useEffect(() => {
     if (analysisData && analysisData.emotionTimeline) {
-      const timeline = analysisData.emotionTimeline; 
+      const timeline = analysisData.emotionTimeline;
       const EMOTIONS_TO_PLOT = ["happy", "neutral", "angry", "surprise"];
 
-      // We'll define color array for different lines
-      const COLORS = ["#ff0000", "#00c853", "#2979ff", "#ff6f00"]; 
-      // e.g. red, green, blue, orange
+      // define colors
+      const COLORS = ["#ff0000", "#00c853", "#2979ff", "#ff6f00"];
+      // red, green, blue, orange
 
       const labels = timeline.map(entry => {
         const t = new Date(entry.timestamp);
@@ -90,8 +91,8 @@ function Analysis() {
           label: emotionKey,
           data: dataPoints,
           borderWidth: 2,
-          borderColor: COLORS[i % COLORS.length],   // color
-          backgroundColor: COLORS[i % COLORS.length] // for the line fill
+          borderColor: COLORS[i % COLORS.length],
+          backgroundColor: COLORS[i % COLORS.length]
         };
       });
 
@@ -106,59 +107,32 @@ function Analysis() {
   if (!analysisData) {
     return (
       <div style={{ textAlign:'center', marginTop:'50px'}}>
-        <h2>Loading Analysis...</h2>
-        <p>If no data appears, ensure you had an interviewId in the route state.</p>
+        <h2>Loading Final Summary...</h2>
       </div>
     );
   }
 
-  const { questions, answers, status, completed_at } = analysisData;
+  // we only have final_summary + timeline
+  const { status, completed_at, final_summary } = analysisData;
 
   return (
     <div style={{ textAlign:'center', marginTop:'30px' }}>
-      <h2>Interview Analysis</h2>
-      <p>Status: {status} {completed_at && `Completed at ${completed_at}`}</p>
+      <h2>Final Interview Summary</h2>
+      <p>Status: {status} {completed_at && `(Completed at ${completed_at})`}</p>
 
-      {/* Q & A Display */}
-      <div style={{ margin:'20px auto', maxWidth:'600px', textAlign:'left'}}>
-        <h3>Questions & Answers</h3>
-        {questions.map((q, idx)=> {
-          const matchingAns = answers.find(a => a.questionIndex === idx);
-          return (
-            <div key={idx} style={{ marginBottom:'20px'}}>
-              <strong>Q{idx+1}:</strong> {q}
-              {matchingAns ? (
-                <div style={{ marginLeft:'20px'}}>
-                  <p><strong>Transcript:</strong> {matchingAns.transcript}</p>
-                  <p><strong>Speech WPM:</strong> {matchingAns.wpm.toFixed(2)}</p>
-                  <p><strong>Filler Words Used:</strong> {JSON.stringify(matchingAns.fillerWordsUsed)}</p>
-
-                  {/* Show the Gemini-based assessment if present */}
-                  {matchingAns.assessment && (
-                    <>
-                      <p><strong>Rating:</strong> {matchingAns.assessment.rating} / 5</p>
-                      <p><strong>Explanation:</strong> {matchingAns.assessment.explanation}</p>
-                      <p><strong>Ideal Answer:</strong> {matchingAns.assessment.ideal_answer}</p>
-                    </>
-                  )}
-                </div>
-              ) : (
-                <p style={{ marginLeft:'20px', color:'red'}}>
-                  No answer recorded
-                </p>
-              )}
-            </div>
-          );
-        })}
+      {/* Soft skill summary from LLM */}
+      <div style={{ margin:'20px auto', maxWidth:'700px', textAlign:'left'}}>
+        <h3>LLM Soft Skill Evaluation</h3>
+        <p>{final_summary}</p>
       </div>
 
-      {/* Emotion Timeline Chart */}
+      {/* Emotion Chart */}
       <div style={{ marginTop:'40px', maxWidth:'800px', margin:'0 auto'}}>
         <h3>Emotion Timeline</h3>
         {emotionChartData ? (
           <Line data={emotionChartData} />
         ) : (
-          <p>No emotion data logged.</p>
+          <p>No emotion data available.</p>
         )}
       </div>
     </div>

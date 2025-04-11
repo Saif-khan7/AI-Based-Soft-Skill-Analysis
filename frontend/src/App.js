@@ -13,22 +13,32 @@ import {
 
 import Dashboard from './pages/Dashboard';
 import ResumeUpload from './pages/ResumeUpload';
-import Interview from './pages/Interview';        // Old test interview
-import MainInterview from './pages/MainInterview';// New main interview
+import Interview from './pages/Interview';
+import MainInterview from './pages/MainInterview';
 import Analysis from './pages/Analysis';
+import AnswerAssessment from './pages/AnswerAssessment';
 
 function App() {
+  const headerStyle = {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '1rem 2rem',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+    backgroundColor: '#fdfdfd',
+    fontFamily: 'Poppins, sans-serif'
+  };
+
+  const titleStyle = {
+    margin: 0,
+    fontWeight: 600,
+    fontSize: '1.4rem'
+  };
+
   return (
     <Router>
-      {/* Header with brand name & sign-in logic */}
-      <header style={{ 
-        display: 'flex', 
-        justifyContent: 'space-between', 
-        alignItems: 'center', 
-        padding: '1rem', 
-        borderBottom: '1px solid #ccc' 
-      }}>
-        <h1>Soft Skill Interview Platform</h1>
+      <header style={headerStyle}>
+        <h1 style={titleStyle}>Soft Skill Interview Platform</h1>
         <div>
           <SignedIn>
             <UserButton />
@@ -40,14 +50,14 @@ function App() {
       </header>
 
       <Routes>
-        {/* 1) Public route for Dashboard */}
+        {/* Public route for Dashboard */}
         <Route path="/" element={<Dashboard />} />
 
-        {/* 2) Clerk’s built-in sign-in & sign-up pages */}
+        {/* Clerk sign-in & sign-up pages */}
         <Route path="/sign-in/*" element={<SignIn routing="path" path="/sign-in" />} />
         <Route path="/sign-up/*" element={<SignUp routing="path" path="/sign-up" />} />
 
-        {/* 3) Protected routes: require SignedIn */}
+        {/* Protected routes: require SignedIn */}
         <Route 
           path="/resume" 
           element={
@@ -73,6 +83,14 @@ function App() {
           }
         />
         <Route 
+          path="/answerAssessment" 
+          element={
+            <SignedIn>
+              <AnswerAssessment />
+            </SignedIn>
+          }
+        />
+        <Route 
           path="/analysis" 
           element={
             <SignedIn>
@@ -81,7 +99,7 @@ function App() {
           }
         />
 
-        {/* 4) Catch-all -> if not signed in, redirect to /sign-in */}
+        {/* Catch-all -> if not signed in, redirect */}
         <Route
           path="*"
           element={

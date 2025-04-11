@@ -1,3 +1,4 @@
+// src/pages/Interview.js
 import React, { useState, useRef, useEffect } from 'react';
 import { useUser } from '@clerk/clerk-react';
 import { useNavigate } from 'react-router-dom';
@@ -7,10 +8,11 @@ function Interview() {
   const { user } = useUser();
 
   const videoRef = useRef(null);
+  const captureIntervalRef = useRef(null);
+
   const [stream, setStream] = useState(null);
   const [emotion, setEmotion] = useState("");
   const [processedImage, setProcessedImage] = useState(null);
-  const captureIntervalRef = useRef(null);
   const [isCapturing, setIsCapturing] = useState(false);
 
   const [interviewId, setInterviewId] = useState(null);
@@ -21,7 +23,6 @@ function Interview() {
   const [isRecording, setIsRecording] = useState(false);
 
   useEffect(() => {
-    // Cleanup on unmount
     return () => {
       stopVideo();
       stopCapturing();
@@ -30,7 +31,9 @@ function Interview() {
     // eslint-disable-next-line
   }, []);
 
-  // Start Interview => calls /api/startInterview
+  // ----------------------
+  // 1) Start Interview => calls /api/startInterview
+  // ----------------------
   const handleStartInterview = async () => {
     if (!user?.primaryEmailAddress) {
       alert("Please sign in first");
@@ -52,7 +55,6 @@ function Interview() {
           setQuestions([data.questions]);
         }
         setCurrentQIndex(0);
-        alert("Interview started with skill-based questions!");
       } else {
         alert(data.error || "Failed to start interview");
       }
@@ -62,7 +64,9 @@ function Interview() {
     }
   };
 
-  // Video & Emotion Tracking
+  // ----------------------
+  // 2) Video & Emotion Tracking
+  // ----------------------
   const startVideo = async () => {
     try {
       const userStream = await navigator.mediaDevices.getUserMedia({ video: true });
@@ -133,7 +137,9 @@ function Interview() {
     }
   };
 
-  // Audio => /api/submitAnswer
+  // ----------------------
+  // 3) Audio => /api/submitAnswer
+  // ----------------------
   const handleStartRecording = async() => {
     try {
       const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -161,8 +167,6 @@ function Interview() {
           const data = await res.json();
           if (data.message === "Answer submitted") {
             alert("Answer recorded successfully!");
-            
-            // Optional: Show rating from Gemini assessment, if it exists
             if (data.assessment) {
               alert(`Rating: ${data.assessment.rating}\nExplanation: ${data.assessment.explanation}\nIdeal Answer: ${data.assessment.ideal_answer}`);
             }
@@ -192,7 +196,9 @@ function Interview() {
     setAudioRecorder(null);
   };
 
-  // Next or finishing the interview
+  // ----------------------
+  // 4) Next or finishing the interview
+  // ----------------------
   const handleNextQuestion = () => {
     if (currentQIndex < questions.length - 1) {
       setCurrentQIndex(currentQIndex + 1);
@@ -217,7 +223,7 @@ function Interview() {
       });
       const data = await res.json();
       if (data.message === "Interview finalized") {
-        navigate("/analysis", { state:{ interviewId }});
+        navigate("/answerAssessment", { state: { interviewId }});
       } else {
         alert(data.error || "Error finalizing interview");
       }
@@ -227,7 +233,7 @@ function Interview() {
     }
   };
 
-  // Render a single question
+  // Show question text
   const renderQuestion = (qItem) => {
     if (!qItem) return null;
     if (typeof qItem === "string") {
@@ -235,8 +241,12 @@ function Interview() {
     } else if (typeof qItem === "object") {
       return (
         <div>
-          <p>{qItem.question}</p>
-          {qItem.skill_tested && <p>Skills: {qItem.skill_tested}</p>}
+          <p style={{ fontWeight: 600, marginBottom: '0.3rem' }}>{qItem.question}</p>
+          {qItem.skill_tested && (
+            <p style={{ fontSize: '0.9rem', color: '#666' }}>
+              <em>Skills: {qItem.skill_tested}</em>
+            </p>
+          )}
         </div>
       );
     } else {
@@ -244,87 +254,209 @@ function Interview() {
     }
   };
 
+  // ----------------------
+  // UI / Layout
+  // ----------------------
+  const containerStyle = {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    fontFamily: 'Poppins, sans-serif',
+    padding: '1rem'
+  };
+
+  const headerStyle = {
+    textAlign: 'center',
+    padding: '2rem 1rem',
+    width: '100%',
+    background: 'linear-gradient(135deg, #6EE2F5 0%, #6454F0 100%)',
+    color: '#fff',
+    marginBottom: '1.5rem'
+  };
+
+  const headingStyle = {
+    margin: 0,
+    fontWeight: 600
+  };
+
+  const subHeadingStyle = {
+    marginTop: '0.5rem'
+  };
+
+  // Card for video/emotion
+  const videoCardStyle = {
+    backgroundColor: '#fff',
+    borderRadius: '8px',
+    boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
+    padding: '1.5rem',
+    maxWidth: '600px',
+    width: '100%',
+    marginBottom: '2rem',
+    textAlign: 'center'
+  };
+
+  // Q/A card
+  const qACardStyle = {
+    backgroundColor: '#fff',
+    borderRadius: '8px',
+    boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
+    padding: '1.5rem',
+    maxWidth: '600px',
+    width: '100%',
+    marginBottom: '2rem'
+  };
+
+  const cardTitleStyle = {
+    marginTop: 0,
+    marginBottom: '1rem',
+    fontWeight: 600,
+    fontSize: '1.2rem'
+  };
+
+  const buttonStyle = {
+    padding: '0.6rem 1.2rem',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontFamily: 'Poppins, sans-serif',
+    fontWeight: 500,
+    marginRight: '0.5rem'
+  };
+
+  const purpleButtonStyle = {
+    ...buttonStyle,
+    backgroundColor: '#6454F0',
+    color: '#fff'
+  };
+
+  const grayButtonStyle = {
+    ...buttonStyle,
+    backgroundColor: '#f5f5f5',
+    color: '#333'
+  };
+
+  const cameraButtonStyle = {
+    ...purpleButtonStyle,
+    marginBottom: '1rem'
+  };
+
   return (
-    <div style={{ textAlign:'center', marginTop:'20px'}}>
-      <h1>Skill-Based Interview</h1>
-
-      {!interviewId && (
-        <button onClick={handleStartInterview}>Start Interview</button>
-      )}
-
-      {interviewId && (
-        <>
-          <p>Interview ID: {interviewId}</p>
-
-          {questions.length > 0 && currentQIndex < questions.length && (
-            <div>
-              <h3>Question {currentQIndex + 1} of {questions.length}</h3>
-              {renderQuestion(questions[currentQIndex])}
-
-              {!isRecording ? (
-                <button onClick={handleStartRecording}>
-                  Record Answer
-                </button>
-              ) : (
-                <button onClick={handleStopRecording}>
-                  Stop Recording
-                </button>
-              )}
-
-              {currentQIndex < questions.length - 1 ? (
-                <button onClick={handleNextQuestion} style={{ marginLeft: '10px' }}>
-                  Next Question
-                </button>
-              ) : (
-                <p style={{ marginTop: '15px' }}>
-                  This is the final question. You can finish when ready.
-                </p>
-              )}
-            </div>
-          )}
-
-          {currentQIndex >= questions.length - 1 && (
-            <div style={{ marginTop:'20px' }}>
-              <button onClick={handleFinishInterview} style={{ fontWeight: 'bold' }}>
-                Finish Interview
-              </button>
-            </div>
-          )}
-        </>
-      )}
-
-      <hr/>
-      <h2>Emotion Tracking</h2>
-      <div>
-        {!stream ? (
-          <button onClick={startVideo}>Start Camera</button>
-        ) : (
-          <button onClick={stopVideo}>Stop Camera</button>
-        )}
-
-        {!isCapturing ? (
-          <button onClick={startCapturing} disabled={!stream} style={{ marginLeft:'10px' }}>
-            Start Tracking
-          </button>
-        ) : (
-          <button onClick={stopCapturing} style={{ marginLeft:'10px' }}>
-            Stop Tracking
-          </button>
-        )}
+    <div style={containerStyle}>
+      <div style={headerStyle}>
+        <h1 style={headingStyle}>AI-Powered Interview</h1>
+        <p style={subHeadingStyle}>Get real-time emotion tracking & skill-based questions</p>
       </div>
 
-      <div style={{ marginTop:'20px' }}>
-        <video 
-          ref={videoRef} 
-          style={{ width:'300px', border:'1px solid #ccc' }} 
-        />
-        <p>Current Emotion: {emotion}</p>
+      {/* Video/Emotion Card */}
+      <div style={videoCardStyle}>
+        <h2 style={cardTitleStyle}>Emotion Tracking</h2>
+        {!stream ? (
+          <button style={cameraButtonStyle} onClick={startVideo}>
+            Start Camera
+          </button>
+        ) : (
+          <button style={cameraButtonStyle} onClick={stopVideo}>
+            Stop Camera
+          </button>
+        )}
+
+        {!isCapturing && stream && (
+          <button style={grayButtonStyle} onClick={startCapturing}>
+            Start Emotion Tracking
+          </button>
+        )}
+        {isCapturing && (
+          <button style={grayButtonStyle} onClick={stopCapturing}>
+            Stop Emotion Tracking
+          </button>
+        )}
+
+        {/* Video Element */}
+        <div style={{ marginTop: '1rem', border: '1px solid #ccc', borderRadius: '4px', overflow: 'hidden' }}>
+          <video 
+            ref={videoRef} 
+            style={{ width: '100%', display: stream ? 'block' : 'none' }}
+          />
+        </div>
+        
+        <p style={{ fontWeight: 500, marginTop: '0.75rem' }}>
+          Current Emotion: <span style={{ color: '#6454F0' }}>{emotion}</span>
+        </p>
+
+        {/* Processed Image */}
         {processedImage && (
           <img
             src={processedImage}
             alt="Processed"
-            style={{ width:'300px', border:'1px solid #ccc', marginTop:'10px'}}
+            style={{ width:'100%', marginTop:'10px', borderRadius:'4px' }}
           />
+        )}
+      </div>
+
+      {/* Q&A Card */}
+      <div style={qACardStyle}>
+        {/* If no interview started, show a "start" prompt */}
+        {!interviewId && (
+          <div style={{ textAlign: 'center' }}>
+            <h2 style={cardTitleStyle}>Ready to Begin?</h2>
+            <p style={{ color: '#666', marginBottom: '1rem' }}>
+              This will generate skill-based questions tailored to your resume.
+            </p>
+            <button style={purpleButtonStyle} onClick={handleStartInterview}>
+              Start Interview
+            </button>
+          </div>
+        )}
+
+        {interviewId && (
+          <>
+            <p style={{ marginBottom: '1rem', color: '#888' }}>
+              <strong>Interview ID:</strong> {interviewId}
+            </p>
+
+            {questions.length > 0 && currentQIndex < questions.length && (
+              <>
+                <h3 style={{ marginBottom: '0.5rem', fontWeight: 600 }}>
+                  Question {currentQIndex + 1} of {questions.length}
+                </h3>
+                {renderQuestion(questions[currentQIndex])}
+
+                <div style={{ marginTop: '1rem' }}>
+                  {!isRecording ? (
+                    <button style={purpleButtonStyle} onClick={handleStartRecording}>
+                      Record Answer
+                    </button>
+                  ) : (
+                    <button style={purpleButtonStyle} onClick={handleStopRecording}>
+                      Stop Recording
+                    </button>
+                  )}
+
+                  {currentQIndex < questions.length - 1 ? (
+                    <button 
+                      style={{ ...grayButtonStyle, marginLeft: '0.5rem' }}
+                      onClick={handleNextQuestion}
+                    >
+                      Next Question
+                    </button>
+                  ) : (
+                    <p style={{ margin: '0.5rem 0', color: '#888', fontSize: '0.9rem' }}>
+                      (Final Question)
+                    </p>
+                  )}
+                </div>
+              </>
+            )}
+
+            {/* If we have reached (or surpassed) the final question index, show finish */}
+            {currentQIndex >= questions.length - 1 && (
+              <div style={{ marginTop: '1.5rem' }}>
+                <button style={purpleButtonStyle} onClick={handleFinishInterview}>
+                  Finish Interview
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

@@ -665,6 +665,11 @@ def finalize_interview():
 
 @app.route("/api/getAnalysis", methods=["POST"])
 def get_analysis():
+    """
+    Returns final summary (LLM-based) + emotion timeline
+    We do NOT return the question/answer details here 
+    because that's in /api/getAssessment now.
+    """
     clerk_email = request.headers.get("Clerk-User-Email")
     if not clerk_email:
         return jsonify({"error": "Not authenticated"}), 401
@@ -683,14 +688,109 @@ def get_analysis():
     if not interview:
         return jsonify({"error": "Interview not found"}), 404
 
-    result = {
+    # We'll gather stats: average filler rate, average rating, etc.
+    answers = interview.get("answers", [])
+    emotion_timeline = interview.get("emotionTimeline", [])
+    # final user status
+    status = interview.get("status", "in_progress")
+    completed_at = interview.get("completed_at", None)
+
+    # let's compute filler usage, average rating
+    total_filler = 0
+    total_words = 0
+    count_answered = 0
+    total_rating = 0
+    rating_count = 0
+
+    for ans in answers:
+        count_answered += 1
+        if ans.get("fillerCount"):
+            total_filler += ans["fillerCount"]
+        # You might approximate total words from transcript's word count or use wpm
+        if ans.get("transcript"):
+            word_count = len(ans["transcript"].split())
+            total_words += word_count
+
+        # rating from gemini
+        assessment = ans.get("assessment")
+        if assessment and isinstance(assessment, dict):
+            r = assessment.get("rating")
+            if r and isinstance(r, int):
+                total_rating += r
+                rating_count += 1
+
+    avg_rating = total_rating / rating_count if rating_count else 3
+    overall_filler_rate = float(total_filler)/float(total_words) if total_words>0 else 0.0
+
+    # We'll call Gemini to create a final summary about:
+    # - communication
+    # - confidence
+    # - overall soft skills
+    final_summary = ""
+    try:
+        if gemini_model:
+            # Build a prompt referencing these stats
+            prompt = f"""
+You are an evaluator of soft skills. 
+We have an interview with the following stats:
+- # of answers: {count_answered}
+- average rating: {avg_rating:.2f} (1..5 scale)
+- filler rate: {overall_filler_rate:.3f} 
+- total words spoken: {total_words}
+
+The user wants a final summary of their communication skills, confidence level, 
+and general soft skills, referencing the rating and filler usage. 
+Return only a short textual summary (no code blocks).
+"""
+            resp = gemini_model.generate_content(prompt)
+            final_summary = resp.text if resp and resp.text else ""
+        else:
+            final_summary = "Gemini model not loaded"
+    except Exception as e:
+        final_summary = f"Error generating final summary: {str(e)}"
+
+    # Return final summary + emotion timeline data
+    return jsonify({
+        "status": status,
+        "completed_at": completed_at,
+        "final_summary": final_summary,
+        "emotionTimeline": emotion_timeline
+    })
+
+
+@app.route("/api/getAssessment", methods=["POST"])
+def get_assessment():
+    """
+    Returns the interview's questions + answers (with Gemini-based rating), 
+    but NOT the final summary or emotion data.
+    This is for the 'AnswerAssessment' page.
+    """
+    clerk_email = request.headers.get("Clerk-User-Email")
+    if not clerk_email:
+        return jsonify({"error": "Not authenticated"}), 401
+
+    data = request.json
+    interview_id = data.get("interviewId")
+    if not interview_id:
+        return jsonify({"error": "Missing interviewId"}), 400
+
+    try:
+        obj_id = ObjectId(interview_id)
+    except:
+        return jsonify({"error": "Invalid interviewId"}), 400
+
+    interview = interviews_collection.find_one({"_id": obj_id, "email": clerk_email})
+    if not interview:
+        return jsonify({"error": "Interview not found"}), 404
+
+    # We only return questions + answers (with any assessment)
+    return jsonify({
         "questions": interview.get("questions", []),
         "answers": interview.get("answers", []),
-        "emotionTimeline": interview.get("emotionTimeline", []),
         "status": interview.get("status", "in_progress"),
         "completed_at": interview.get("completed_at", None)
-    }
-    return jsonify(result)
+    })
+
 
 if __name__ == "__main__":
     app.run(debug=True)
