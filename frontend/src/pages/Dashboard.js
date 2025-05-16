@@ -69,8 +69,12 @@ function Dashboard() {
     fontWeight: 500
   };
 
-  const handleViewDocs = () => {
-    window.open('https://your-documentation-url.com', '_blank');
+  const handleViewBridge = () => {
+    window.open('https://bridgeetal.com', '_blank');
+  };
+
+  const handleViewChange = () => {
+    window.open('https://changetal.com/', '_blank');
   };
 
   return (
@@ -87,8 +91,11 @@ function Dashboard() {
           <button style={startButtonStyle} onClick={handleStartInterview}>
             Start Interview
           </button>
-          <button style={docButtonStyle} onClick={handleViewDocs}>
-            View Documentation
+          <button style={docButtonStyle} onClick={handleViewBridge}>
+            View Bridge et al
+          </button>
+          <button style={docButtonStyle} onClick={handleViewChange}>
+            View Change et al
           </button>
         </div>
       </section>

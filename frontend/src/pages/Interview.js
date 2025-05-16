@@ -1,7 +1,6 @@
-// src/pages/Interview.js
-import React, { useState, useRef, useEffect } from 'react';
-import { useUser } from '@clerk/clerk-react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useRef, useEffect } from "react";
+import { useUser } from "@clerk/clerk-react";
+import { useNavigate } from "react-router-dom";
 
 function Interview() {
   const navigate = useNavigate();
@@ -22,6 +21,7 @@ function Interview() {
   const [audioRecorder, setAudioRecorder] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
 
+  /* ─────────────────────────── clean-up ─────────────────────────── */
   useEffect(() => {
     return () => {
       stopVideo();
@@ -31,9 +31,7 @@ function Interview() {
     // eslint-disable-next-line
   }, []);
 
-  // ----------------------
-  // 1) Start Interview => calls /api/startInterview
-  // ----------------------
+  /* ─────────────────────────── 1) start interview ───────────────── */
   const handleStartInterview = async () => {
     if (!user?.primaryEmailAddress) {
       alert("Please sign in first");
@@ -42,18 +40,12 @@ function Interview() {
     try {
       const res = await fetch("http://localhost:5000/api/startInterview", {
         method: "POST",
-        headers: {
-          "Clerk-User-Email": user.primaryEmailAddress.emailAddress
-        }
+        headers: { "Clerk-User-Email": user.primaryEmailAddress.emailAddress }
       });
       const data = await res.json();
       if (data.interviewId) {
         setInterviewId(data.interviewId);
-        if (Array.isArray(data.questions)) {
-          setQuestions(data.questions);
-        } else {
-          setQuestions([data.questions]);
-        }
+        setQuestions(Array.isArray(data.questions) ? data.questions : [data.questions]);
         setCurrentQIndex(0);
       } else {
         alert(data.error || "Failed to start interview");
@@ -64,9 +56,7 @@ function Interview() {
     }
   };
 
-  // ----------------------
-  // 2) Video & Emotion Tracking
-  // ----------------------
+  /* ─────────────────────────── 2) video & emotion ───────────────── */
   const startVideo = async () => {
     try {
       const userStream = await navigator.mediaDevices.getUserMedia({ video: true });
@@ -79,101 +69,98 @@ function Interview() {
       console.error("Video error:", err);
     }
   };
-
   const stopVideo = () => {
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
-    }
+    if (stream) stream.getTracks().forEach((t) => t.stop());
     setStream(null);
   };
 
   const startCapturing = () => {
     setIsCapturing(true);
-    captureIntervalRef.current = setInterval(() => captureFrame(), 2000);
+    captureIntervalRef.current = setInterval(captureFrame, 2000);
   };
-
   const stopCapturing = () => {
     setIsCapturing(false);
     if (captureIntervalRef.current) clearInterval(captureIntervalRef.current);
   };
 
-  const captureFrame = async() => {
+  const captureFrame = async () => {
     if (!videoRef.current) return;
     const canvas = document.createElement("canvas");
     canvas.width = videoRef.current.videoWidth;
     canvas.height = videoRef.current.videoHeight;
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+    canvas.getContext("2d").drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
     const base64Image = canvas.toDataURL("image/jpeg");
-
     try {
       const resp = await fetch("http://localhost:5000/analyzeFrame", {
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ image: base64Image })
       });
       const data = await resp.json();
-
       if (!data.error) {
         setEmotion(data.dominant_emotion);
         setProcessedImage(data.image);
-
         if (interviewId && user?.primaryEmailAddress && data.emotion_distribution) {
           await fetch("http://localhost:5000/api/logEmotion", {
-            method:"POST",
+            method: "POST",
             headers: {
-              "Content-Type":"application/json",
+              "Content-Type": "application/json",
               "Clerk-User-Email": user.primaryEmailAddress.emailAddress
             },
-            body: JSON.stringify({
-              interviewId,
-              emotion_distribution: data.emotion_distribution
-            })
+            body: JSON.stringify({ interviewId, emotion_distribution: data.emotion_distribution })
           });
         }
       }
-    } catch(e) { 
+    } catch (e) {
       console.error("Emotion error:", e);
     }
   };
 
-  // ----------------------
-  // 3) Audio => /api/submitAnswer
-  // ----------------------
-  const handleStartRecording = async() => {
+  /* ─────────────────────────── 3) audio / submitAnswer ──────────── */
+  const handleStartRecording = async () => {
     try {
       const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const recorder = new MediaRecorder(audioStream);
       const chunks = [];
 
       recorder.ondataavailable = (e) => {
-        if (e.data.size>0) chunks.push(e.data);
+        if (e.data.size) chunks.push(e.data);
       };
-      recorder.onstop = async() => {
-        const audioBlob = new Blob(chunks, { type:"audio/wav" });
+
+      recorder.onstop = async () => {
+        const audioBlob = new Blob(chunks, { type: "audio/wav" });
         const formData = new FormData();
-        formData.append("audio", audioBlob,"answer.wav");
+        formData.append("audio", audioBlob, "answer.wav");
         formData.append("interviewId", interviewId);
         formData.append("questionIndex", currentQIndex.toString());
 
         try {
           const res = await fetch("http://localhost:5000/api/submitAnswer", {
-            method:"POST",
-            headers:{
-              "Clerk-User-Email": user.primaryEmailAddress.emailAddress
-            },
+            method: "POST",
+            headers: { "Clerk-User-Email": user.primaryEmailAddress.emailAddress },
             body: formData
           });
           const data = await res.json();
           if (data.message === "Answer submitted") {
-            alert("Answer recorded successfully!");
-            if (data.assessment) {
-              alert(`Rating: ${data.assessment.rating}\nExplanation: ${data.assessment.explanation}\nIdeal Answer: ${data.assessment.ideal_answer}`);
+            const a = data.assessment || {};
+            /* -------- context-aware alert -------- */
+            if (a.strengths && a.strengths.length) {
+              alert(
+                `Rating: ${a.rating}\n\n` +
+                  `Strengths:\n- ${a.strengths.join("\n- ")}\n\n` +
+                  `Improvements:\n- ${a.improvements.join("\n- ")}`
+              );
+            } else {
+              alert(
+                `Rating: ${a.rating}\n` +
+                  `Explanation: ${a.explanation}\n` +
+                  `Ideal Answer: ${a.ideal_answer}`
+              );
             }
           } else {
             alert(data.error || "Error submitting answer");
           }
-        } catch(err) {
+        } catch (err) {
           console.error("submitAnswer error:", err);
         }
       };
@@ -181,77 +168,63 @@ function Interview() {
       recorder.start();
       setAudioRecorder(recorder);
       setIsRecording(true);
-    } catch(err) {
+    } catch (err) {
       console.error("Mic error:", err);
       alert("Could not access microphone.");
     }
   };
-
   const handleStopRecording = () => {
     if (audioRecorder) {
       audioRecorder.stop();
-      audioRecorder.stream.getTracks().forEach(t=>t.stop());
+      audioRecorder.stream.getTracks().forEach((t) => t.stop());
     }
     setIsRecording(false);
     setAudioRecorder(null);
   };
 
-  // ----------------------
-  // 4) Next / Finish Interview
-  // ----------------------
-  const handleNextQuestion = () => {
-    if (currentQIndex < questions.length - 1) {
-      setCurrentQIndex(currentQIndex + 1);
-    } else {
-      alert("You are on the final question. You can finish now.");
-    }
-  };
+  /* ─────────────────────────── 4) navigation ───────────────────── */
+  const handleNextQuestion = () =>
+    currentQIndex < questions.length - 1
+      ? setCurrentQIndex((i) => i + 1)
+      : alert("You are on the final question. You can finish now.");
 
-  const handleFinishInterview = async() => {
-    if (!interviewId) {
-      alert("No interview in progress to finalize!");
-      return;
-    }
+  const handleFinishInterview = async () => {
+    if (!interviewId) return alert("No interview in progress!");
     try {
       const res = await fetch("http://localhost:5000/api/finalizeInterview", {
-        method:"POST",
-        headers:{
-          "Content-Type":"application/json",
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
           "Clerk-User-Email": user.primaryEmailAddress.emailAddress
         },
         body: JSON.stringify({ interviewId })
       });
       const data = await res.json();
       if (data.message === "Interview finalized") {
-        navigate("/answerAssessment", { state: { interviewId }} );
+        navigate("/answerAssessment", { state: { interviewId } });
       } else {
         alert(data.error || "Error finalizing interview");
       }
-    } catch(err) {
+    } catch (err) {
       console.error("Finalize error:", err);
       alert("Could not finalize interview.");
     }
   };
 
-  const renderQuestion = (qItem) => {
-    if (!qItem) return null;
-    if (typeof qItem === "string") {
-      return <p>{qItem}</p>;
-    } else if (typeof qItem === "object") {
-      return (
-        <div>
-          <p style={{ fontWeight: 600, marginBottom: '0.3rem' }}>{qItem.question}</p>
-          {qItem.skill_tested && (
-            <p style={{ fontSize: '0.9rem', color: '#666' }}>
-              <em>Skills: {qItem.skill_tested}</em>
-            </p>
-          )}
-        </div>
-      );
-    } else {
-      return <p>{String(qItem)}</p>;
-    }
-  };
+  /* ─────────────────────────── render helpers ───────────────────── */
+  const renderQuestion = (q) =>
+    typeof q === "string" ? (
+      <p>{q}</p>
+    ) : (
+      <div>
+        <p style={{ fontWeight: 600, marginBottom: 4 }}>{q.question}</p>
+        {q.skill_tested && (
+          <p style={{ fontSize: "0.9rem", color: "#666" }}>
+            <em>Skills: {q.skill_tested}</em>
+          </p>
+        )}
+      </div>
+    );
 
   // ----------------------
   // Styles

@@ -488,65 +488,67 @@ If you cannot comply, return "Unable to comply."
     })
 
 # ---------------------------------------------------
-# 7) /api/submitAnswer — UPDATED
+# 7) /api/submitAnswer  ← ★ UPDATED BLOCK INSIDE ★
 # ---------------------------------------------------
 @app.route("/api/submitAnswer", methods=["POST"])
 def submit_answer():
-    clerk_email = request.headers.get("Clerk-User-Email")
-    if not clerk_email:
-        return jsonify({"error":"Not authenticated"}),401
+    clerk_email  = request.headers.get("Clerk-User-Email")
+    if not clerk_email:  return jsonify({"error":"Not authenticated"}),401
 
-    interview_id  = request.form.get("interviewId")
-    q_idx         = int(request.form.get("questionIndex","0"))
-    if not interview_id: return jsonify({"error":"Missing interviewId"}),400
-    if "audio" not in request.files: return jsonify({"error":"No audio file"}),400
+    interview_id = request.form.get("interviewId")
+    q_idx        = int(request.form.get("questionIndex","0"))
+    if not interview_id:           return jsonify({"error":"Missing interviewId"}),400
+    if "audio" not in request.files:return jsonify({"error":"No audio file"}),400
 
-    obj_id = ObjectId(interview_id)
-    interview = interviews_collection.find_one({"_id":obj_id,"email":clerk_email})
-    if not interview: return jsonify({"error":"Interview not found"}),404
+    obj_id   = ObjectId(interview_id)
+    interview= interviews_collection.find_one({"_id":obj_id,"email":clerk_email})
+    if not interview:              return jsonify({"error":"Interview not found"}),404
 
     tmp_path = None
     try:
+        # -- save audio temp
         with tempfile.NamedTemporaryFile(delete=False,suffix=".wav") as tmp:
-            request.files["audio"].save(tmp.name); tmp_path = tmp.name
+            request.files["audio"].save(tmp.name)
+            tmp_path = tmp.name
+
         lang, transcript, metrics = transcribe_audio(tmp_path)
 
-        # store raw answer first ------------------------------------------------
+        # -- push raw answer
         ans_doc = dict(
-            questionIndex = q_idx,
-            transcript    = transcript,
-            language      = lang,
-            wpm           = metrics["wpm"],
-            fillerRate    = metrics["filler_rate"],
-            fillerCount   = metrics["filler_count"],
+            questionIndex   = q_idx,
+            transcript      = transcript,
+            language        = lang,
+            wpm             = metrics["wpm"],
+            fillerRate      = metrics["filler_rate"],
+            fillerCount     = metrics["filler_count"],
             fillerWordsUsed = metrics["filler_words_used"],
-            timestamp     = datetime.utcnow()
+            timestamp       = datetime.utcnow()
         )
         interviews_collection.update_one({"_id":obj_id},{"$push":{"answers":ans_doc}})
-        answer_pos = len(interview.get("answers",[]))      # zero-based index *after* push
+        answer_pos = len(interview.get("answers",[]))  # position after push
 
-        # ----- LLM assessment --------------------------------------------------
-        assessment  = {}
+        # -- LLM assessment --------------------------------------------------
+        assessment = {}
         if gemini_model:
-            tech_cnt  = interview.get("technicalCount", NUM_TECH_Q)   ##### <NEW>
-            is_soft   = q_idx >= tech_cnt                               ##### <NEW>
-            q_text    = interview["questions"][q_idx] if q_idx < len(interview["questions"]) else ""
+            tech_cnt = interview.get("technicalCount", NUM_TECH_Q)
+            is_soft  = q_idx >= tech_cnt
+            q_text   = interview["questions"][q_idx] if q_idx < len(interview["questions"]) else ""
 
-            if is_soft:                                                 ##### <NEW>
+            if is_soft:
                 prompt = f"""
 You are a behavioural-interview assessor.
 
 Return JSON:
 {{
-  "rating":     1-5,
-  "strengths":  [string]  // max 5
-  "improvements":[string] // max 5
+  "rating":       1-5,
+  "strengths":    [string],   // ≤5
+  "improvements": [string]    // ≤5
 }}
 
 Question: {q_text}
 Answer transcript: {transcript}
 """
-            else:  # technical
+            else:
                 prompt = f"""
 You are a technical interviewer.
 
@@ -563,21 +565,57 @@ Answer transcript: {transcript}
 
             try:
                 raw = remove_code_fences(gemini_model.generate_content(prompt).text or "{}")
-                assessment = json.loads(raw) if raw.strip().startswith("{") else {"rating":3,"explanation":raw}
-            except Exception as e:
-                assessment = {"rating":3,"explanation":f"Parse error: {e}"}
+                print("Gemini raw:", raw)                           # debug line
+                try:
+                    parsed = json.loads(raw) if raw.strip().startswith("{") else {}
+                except:
+                    parsed = {}
+                if not isinstance(parsed, dict):
+                    parsed = {}
 
-        # store assessment ------------------------------------------------------
+                if is_soft:
+                    # Always include placeholders for explanation/ideal
+                    assessment = {
+                        "rating"      : parsed.get("rating", 3),
+                        "strengths"   : parsed.get("strengths", []),
+                        "improvements": parsed.get("improvements", []),
+                        "explanation" : "Explanation not applicable",
+                        "ideal_answer": "Ideal answer not applicable"
+                    }
+                else:
+                    assessment = {
+                        "rating"      : parsed.get("rating", 3),
+                        "explanation" : parsed.get("explanation", "Explanation not available"),
+                        "ideal_answer": parsed.get("ideal_answer", "Ideal answer not available"),
+                        # keep empty arrays for UI consistency
+                        "strengths"   : [],
+                        "improvements": []
+                    }
+
+            except Exception as e:
+                assessment = {
+                    "rating"      : 3,
+                    "explanation" : f"Parse error: {e}",
+                    "ideal_answer": "N/A",
+                    "strengths"   : [],
+                    "improvements": []
+                }
+
+        # -- store assessment
         interviews_collection.update_one(
             {"_id":obj_id},
             {"$set":{f"answers.{answer_pos}.assessment":assessment}}
         )
 
-        return jsonify({"message":"Answer submitted","metrics":metrics,"assessment":assessment})
+        return jsonify({"message":"Answer submitted",
+                        "metrics":metrics,
+                        "assessment":assessment})
     except Exception as e:
-        traceback.print_exc(); return jsonify({"error":str(e)}),500
+        traceback.print_exc()
+        return jsonify({"error":str(e)}),500
     finally:
-        if tmp_path and os.path.exists(tmp_path): os.remove(tmp_path)
+        if tmp_path and os.path.exists(tmp_path):
+            os.remove(tmp_path)
 # ---------------------------------------------------
 # 8) finalizeInterview => mark as completed
 # ---------------------------------------------------

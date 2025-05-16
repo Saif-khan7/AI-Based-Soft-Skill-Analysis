@@ -1,26 +1,19 @@
-// src/pages/AnswerAssessment.js
-import React, { useState, useEffect } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import { useUser } from '@clerk/clerk-react';
+import React, { useState, useEffect } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { useUser } from "@clerk/clerk-react";
 
 function AnswerAssessment() {
   const { user } = useUser();
   const location = useLocation();
   const navigate = useNavigate();
-
   const [assessmentData, setAssessmentData] = useState(null);
 
+  /* ─────────── fetch unchanged ─────────── */
   useEffect(() => {
-    const fetchAssessment = async() => {
-      if (!user?.primaryEmailAddress) {
-        console.warn("No user email - not fetching assessment");
-        return;
-      }
+    const fetchAssessment = async () => {
+      if (!user?.primaryEmailAddress) return;
       const interviewId = location.state?.interviewId;
-      if (!interviewId) {
-        console.warn("No interviewId in route state. Can't fetch assessment.");
-        return;
-      }
+      if (!interviewId) return;
       try {
         const res = await fetch("http://localhost:5000/api/getAssessment", {
           method: "POST",
@@ -31,41 +24,33 @@ function AnswerAssessment() {
           body: JSON.stringify({ interviewId })
         });
         const data = await res.json();
-        if (data.error) {
-          console.error("Assessment error:", data.error);
-        } else {
-          setAssessmentData(data);
-        }
-      } catch(err) {
+        if (!data.error) setAssessmentData(data);
+      } catch (err) {
         console.error("fetchAssessment error:", err);
       }
     };
     fetchAssessment();
   }, [user, location.state]);
 
-  const handleProceed = () => {
-    // Navigate to the final summary + chart page
+  const handleProceed = () =>
     navigate("/analysis", { state: { interviewId: location.state?.interviewId } });
-  };
 
-  if (!assessmentData) {
+  if (!assessmentData)
     return (
       <div style={styles.container}>
         <div style={styles.header}>
           <h1 style={styles.headerTitle}>Loading Assessment...</h1>
         </div>
-        <div style={{ textAlign: 'center', marginTop: '50px' }}>
+        <div style={{ textAlign: "center", marginTop: 50 }}>
           <h2>Please wait while we fetch your results.</h2>
         </div>
       </div>
     );
-  }
 
   const { questions, answers } = assessmentData;
 
   return (
     <div style={styles.container}>
-      {/* Hero header */}
       <div style={styles.header}>
         <h1 style={styles.headerTitle}>Answer Assessment</h1>
         <p style={styles.headerSubtitle}>
@@ -73,43 +58,60 @@ function AnswerAssessment() {
         </p>
       </div>
 
-      {/* Main content */}
       <div style={styles.content}>
         <div style={styles.assessmentList}>
-          {questions.map((question, idx) => {
-            const ans = answers.find(a => a.questionIndex === idx);
+          {questions.map((q, idx) => {
+            const ans = answers.find((a) => a.questionIndex === idx);
+            const a   = ans?.assessment || {};
+            const isSoft = a.strengths && a.strengths.length;
             return (
               <div key={idx} style={styles.qCard}>
                 <h2 style={styles.qTitle}>Question {idx + 1}</h2>
-                <p style={styles.questionText}>{question}</p>
+                <p style={styles.questionText}>{q}</p>
 
                 {ans ? (
                   <div style={styles.answerContainer}>
                     <p style={styles.answerLine}>
-                      <strong>Transcript: </strong>
-                      {ans.transcript}
+                      <strong>Transcript:</strong> {ans.transcript || "No transcript"}
+                    </p>
+                    <p style={styles.answerLine}>
+                      <strong>Rating:</strong> {a.rating ?? "N/A"}
                     </p>
 
-                    {ans.assessment ? (
+                    {isSoft ? (
                       <>
                         <p style={styles.answerLine}>
-                          <strong>Rating:</strong> {ans.assessment.rating}
+                          <strong>Strengths:</strong>
                         </p>
+                        <ul>
+                          {(a.strengths || []).map((s, i) => (
+                            <li key={i}>{s}</li>
+                          ))}
+                        </ul>
                         <p style={styles.answerLine}>
-                          <strong>Explanation:</strong> {ans.assessment.explanation}
+                          <strong>Improvements:</strong>
                         </p>
-                        <p style={styles.answerLine}>
-                          <strong>Ideal Answer:</strong> {ans.assessment.ideal_answer}
-                        </p>
+                        <ul>
+                          {(a.improvements || []).map((s, i) => (
+                            <li key={i}>{s}</li>
+                          ))}
+                        </ul>
                       </>
                     ) : (
-                      <p style={styles.noAssessment}>No LLM assessment available.</p>
+                      <>
+                        <p style={styles.answerLine}>
+                          <strong>Explanation:</strong>{" "}
+                          {a.explanation || "Explanation not available"}
+                        </p>
+                        <p style={styles.answerLine}>
+                          <strong>Ideal Answer:</strong>{" "}
+                          {a.ideal_answer || "Ideal answer not available"}
+                        </p>
+                      </>
                     )}
                   </div>
                 ) : (
-                  <p style={styles.noAnswer}>
-                    No answer recorded
-                  </p>
+                  <p style={styles.noAnswer}>No answer recorded</p>
                 )}
               </div>
             );
@@ -118,15 +120,13 @@ function AnswerAssessment() {
 
         <div style={styles.buttonArea}>
           <button style={styles.proceedButton} onClick={handleProceed}>
-            View Final Summary & Chart
+            View Final Summary &amp; Chart
           </button>
         </div>
       </div>
     </div>
   );
 }
-
-// Inline styles for a consistent, modern look
 const styles = {
   container: {
     display: 'flex',
