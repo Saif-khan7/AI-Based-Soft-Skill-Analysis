@@ -45,7 +45,7 @@ function Analysis() {
         return;
       }
       try {
-        // This route returns final_summary + emotionTimeline
+        // This route returns final_summary, skillAnalysis, overall stats, emotionTimeline, etc.
         const res = await fetch("http://localhost:5000/api/getAnalysis", {
           method: "POST",
           headers: {
@@ -67,15 +67,33 @@ function Analysis() {
     fetchAnalysis();
   }, [user, location.state]);
 
-  // build chart data
+  // Build chart data for 7 emotions
   useEffect(() => {
     if (analysisData && analysisData.emotionTimeline) {
       const timeline = analysisData.emotionTimeline;
-      const EMOTIONS_TO_PLOT = ["happy", "neutral", "angry", "surprise"];
+      
+      // We'll now plot all seven emotions:
+      const EMOTIONS_TO_PLOT = [
+        "angry",
+        "disgust",
+        "fear",
+        "happy",
+        "neutral",
+        "sad",
+        "surprise"
+      ];
 
-      // define colors
-      const COLORS = ["#ff0000", "#00c853", "#2979ff", "#ff6f00"];
-      // red, green, blue, orange
+      // define a distinct color array for each emotion
+      // (7 bright colors)
+      const COLORS = [
+        "#e6194B", // bright red
+        "#3cb44b", // green
+        "#911eb4", // purple
+        "#ffe119", // yellow
+        "#4363d8", // blue
+        "#f58231", // orange
+        "#42d4f4"  // aqua/cyan
+      ];
 
       const labels = timeline.map(entry => {
         const t = new Date(entry.timestamp);
@@ -85,6 +103,7 @@ function Analysis() {
       const datasets = EMOTIONS_TO_PLOT.map((emotionKey, i) => {
         const dataPoints = timeline.map(entry => {
           const dist = entry.distribution || {};
+          // each distribution is e.g. {angry: 2.70, disgust: 0.001, ...}
           return dist[emotionKey] || 0;
         });
         return {
@@ -92,7 +111,8 @@ function Analysis() {
           data: dataPoints,
           borderWidth: 2,
           borderColor: COLORS[i % COLORS.length],
-          backgroundColor: COLORS[i % COLORS.length]
+          backgroundColor: COLORS[i % COLORS.length],
+          tension: 0.2  // slight curve to the line
         };
       });
 
@@ -106,37 +126,248 @@ function Analysis() {
 
   if (!analysisData) {
     return (
-      <div style={{ textAlign:'center', marginTop:'50px'}}>
-        <h2>Loading Final Summary...</h2>
+      <div style={styles.container}>
+        <div style={styles.header}>
+          <h1 style={styles.headerTitle}>Loading Final Summary...</h1>
+        </div>
+        <div style={{ textAlign:'center', marginTop:'50px'}}>
+          <h3>Please wait while we gather your results.</h3>
+        </div>
       </div>
     );
   }
 
-  // we only have final_summary + timeline
-  const { status, completed_at, final_summary } = analysisData;
+  const {
+    status,
+    completed_at,
+    final_summary,
+    avgRating,
+    fillerRate,
+    totalWordsSpoken,
+    skillAnalysis,
+    emotionTimeline
+  } = analysisData;
 
   return (
-    <div style={{ textAlign:'center', marginTop:'30px' }}>
-      <h2>Final Interview Summary</h2>
-      <p>Status: {status} {completed_at && `(Completed at ${completed_at})`}</p>
-
-      {/* Soft skill summary from LLM */}
-      <div style={{ margin:'20px auto', maxWidth:'700px', textAlign:'left'}}>
-        <h3>LLM Soft Skill Evaluation</h3>
-        <p>{final_summary}</p>
+    <div style={styles.container}>
+      {/* Hero Header */}
+      <div style={styles.header}>
+        <h1 style={styles.headerTitle}>Interview Analysis</h1>
+        <p style={styles.headerSubtitle}>
+          Detailed Soft Skill & Overall Performance Insights
+        </p>
       </div>
 
-      {/* Emotion Chart */}
-      <div style={{ marginTop:'40px', maxWidth:'800px', margin:'0 auto'}}>
-        <h3>Emotion Timeline</h3>
-        {emotionChartData ? (
-          <Line data={emotionChartData} />
-        ) : (
-          <p>No emotion data available.</p>
+      {/* Main Content */}
+      <div style={styles.mainContent}>
+
+        {/* Overall Stats Row */}
+        <div style={styles.statsRow}>
+          <div style={styles.statCard}>
+            <h3 style={styles.statTitle}>Average Rating</h3>
+            <p style={styles.statValue}>
+              {avgRating ? avgRating.toFixed(2) : "N/A"} / 5
+            </p>
+          </div>
+          <div style={styles.statCard}>
+            <h3 style={styles.statTitle}>Filler Rate</h3>
+            <p style={styles.statValue}>
+              {(fillerRate * 100).toFixed(2)}%
+            </p>
+          </div>
+          <div style={styles.statCard}>
+            <h3 style={styles.statTitle}>Words Spoken</h3>
+            <p style={styles.statValue}>
+              {totalWordsSpoken || 0}
+            </p>
+          </div>
+        </div>
+
+        {/* Final Summary Card */}
+        <div style={styles.card}>
+          <h2 style={styles.cardTitle}>Overall Summary</h2>
+          <p style={styles.summaryText}>
+            <strong>Status:</strong> {status} {completed_at && `(Completed at ${completed_at})`}
+          </p>
+          <p style={styles.summaryText}>{final_summary || "No final summary."}</p>
+        </div>
+
+        {/* Soft Skill Analysis */}
+        {skillAnalysis && (
+          <div style={styles.card}>
+            <h2 style={styles.cardTitle}>Soft Skill Breakdown</h2>
+            {Object.keys(skillAnalysis).map((skillKey, idx) => {
+              const analysisText = skillAnalysis[skillKey];
+              return (
+                <div key={idx} style={styles.skillSection}>
+                  <h3 style={styles.skillTitle}>{capitalize(skillKey)} Skills</h3>
+                  {renderBulletPoints(analysisText)}
+                </div>
+              );
+            })}
+          </div>
         )}
+
+        {/* Emotion Timeline Chart */}
+        <div style={styles.chartContainer}>
+          <h2 style={styles.cardTitle}>Emotion Timeline</h2>
+          {emotionChartData ? (
+            <div style={{ maxWidth: '800px', margin: '0 auto' }}>
+              <Line data={emotionChartData} options={{
+                responsive: true,
+                plugins: {
+                  legend: {
+                    position: 'top'
+                  },
+                  title: {
+                    display: true,
+                    text: 'Emotions Over Time'
+                  }
+                },
+                scales: {
+                  y: {
+                    beginAtZero: true,
+                    title: {
+                      display: true,
+                      text: 'Probability (%)'
+                    }
+                  }
+                }
+              }} />
+            </div>
+          ) : (
+            <p>No emotion data available.</p>
+          )}
+        </div>
       </div>
     </div>
   );
 }
+
+// Helper to display bullet points
+function renderBulletPoints(text) {
+  if (!text || text.trim().length === 0) {
+    return <p style={{ color: '#999' }}>No analysis provided.</p>;
+  }
+
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+  
+  const bullets = [];
+  for (let l of lines) {
+    if (l.startsWith("-")) {
+      bullets.push(l.substring(1).trim());
+    }
+  }
+
+  if (bullets.length > 0) {
+    return (
+      <ul style={{ marginLeft: '1.5rem', lineHeight: 1.6 }}>
+        {bullets.map((b, i) => <li key={i}>{b}</li>)}
+      </ul>
+    );
+  } else {
+    // If no lines start with "-", just show raw
+    return <p style={{ marginLeft:'1rem' }}>{text}</p>;
+  }
+}
+
+function capitalize(str) {
+  if (!str) return "";
+  return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+const styles = {
+  container: {
+    display: 'flex',
+    flexDirection: 'column',
+    fontFamily: 'Poppins, sans-serif',
+    minHeight: '100vh'
+  },
+  header: {
+    padding: '2rem 1rem',
+    background: 'linear-gradient(135deg, #6EE2F5 0%, #6454F0 100%)',
+    textAlign: 'center',
+    color: '#fff',
+    marginBottom: '2rem'
+  },
+  headerTitle: {
+    margin: 0,
+    fontWeight: 600
+  },
+  headerSubtitle: {
+    marginTop: '0.5rem',
+    fontSize: '1rem',
+    opacity: 0.9
+  },
+  mainContent: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    padding: '0 1rem 2rem',
+    flex: 1
+  },
+  statsRow: {
+    display: 'flex',
+    gap: '1rem',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    marginBottom: '2rem'
+  },
+  statCard: {
+    backgroundColor: '#fff',
+    borderRadius: '8px',
+    boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
+    padding: '1rem 1.5rem',
+    minWidth: '160px',
+    textAlign: 'center'
+  },
+  statTitle: {
+    margin: 0,
+    fontWeight: 600,
+    color: '#333',
+    marginBottom: '0.3rem'
+  },
+  statValue: {
+    margin: 0,
+    fontSize: '1.3rem',
+    color: '#6454F0',
+    fontWeight: 500
+  },
+  card: {
+    backgroundColor: '#fff',
+    borderRadius: '8px',
+    boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
+    padding: '1.5rem',
+    maxWidth: '800px',
+    width: '100%',
+    marginBottom: '2rem'
+  },
+  cardTitle: {
+    marginTop: 0,
+    marginBottom: '1rem',
+    fontWeight: 600,
+    fontSize: '1.2rem'
+  },
+  summaryText: {
+    marginBottom: '1rem',
+    color: '#444',
+    lineHeight: 1.5
+  },
+  skillSection: {
+    marginBottom: '1.5rem'
+  },
+  skillTitle: {
+    margin: 0,
+    marginBottom: '0.5rem',
+    fontWeight: 600,
+    fontSize: '1.05rem',
+    color: '#333'
+  },
+  chartContainer: {
+    maxWidth: '900px',
+    width: '100%',
+    textAlign: 'center'
+  }
+};
 
 export default Analysis;

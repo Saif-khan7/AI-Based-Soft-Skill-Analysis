@@ -43,56 +43,174 @@ function AnswerAssessment() {
     fetchAssessment();
   }, [user, location.state]);
 
+  const handleProceed = () => {
+    // Navigate to the final summary + chart page
+    navigate("/analysis", { state: { interviewId: location.state?.interviewId } });
+  };
+
   if (!assessmentData) {
-    return <div style={{ textAlign:'center', marginTop:'50px'}}>
-      <h2>Loading Q&A Assessment...</h2>
-    </div>;
+    return (
+      <div style={styles.container}>
+        <div style={styles.header}>
+          <h1 style={styles.headerTitle}>Loading Assessment...</h1>
+        </div>
+        <div style={{ textAlign: 'center', marginTop: '50px' }}>
+          <h2>Please wait while we fetch your results.</h2>
+        </div>
+      </div>
+    );
   }
 
   const { questions, answers } = assessmentData;
 
-  const handleProceed = () => {
-    // Navigate to the final summary + chart page
-    navigate("/analysis", { state: { interviewId: location.state.interviewId } });
-  };
-
   return (
-    <div style={{ textAlign:'center', marginTop:'30px' }}>
-      <h2>Answer Assessment</h2>
-      <p>Below are your questions, transcripts, and ratings from the LLM:</p>
-
-      <div style={{ maxWidth:'600px', margin:'20px auto', textAlign:'left' }}>
-        {questions.map((q, idx) => {
-          const ans = answers.find(a => a.questionIndex === idx);
-          return (
-            <div key={idx} style={{ marginBottom:'20px'}}>
-              <p><strong>Q{idx+1}:</strong> {q}</p>
-              {ans ? (
-                <div style={{ marginLeft:'20px'}}>
-                  <p><strong>Transcript:</strong> {ans.transcript}</p>
-                  {ans.assessment && (
-                    <>
-                      <p><strong>Rating:</strong> {ans.assessment.rating}</p>
-                      <p><strong>Explanation:</strong> {ans.assessment.explanation}</p>
-                      <p><strong>Ideal Answer:</strong> {ans.assessment.ideal_answer}</p>
-                    </>
-                  )}
-                </div>
-              ) : (
-                <p style={{ color:'red', marginLeft:'20px'}}>
-                  No answer recorded
-                </p>
-              )}
-            </div>
-          );
-        })}
+    <div style={styles.container}>
+      {/* Hero header */}
+      <div style={styles.header}>
+        <h1 style={styles.headerTitle}>Answer Assessment</h1>
+        <p style={styles.headerSubtitle}>
+          Here are your recorded answers and the LLM-based analysis.
+        </p>
       </div>
 
-      <button onClick={handleProceed} style={{ padding:'10px 20px', cursor:'pointer' }}>
-        View Final Summary & Chart
-      </button>
+      {/* Main content */}
+      <div style={styles.content}>
+        <div style={styles.assessmentList}>
+          {questions.map((question, idx) => {
+            const ans = answers.find(a => a.questionIndex === idx);
+            return (
+              <div key={idx} style={styles.qCard}>
+                <h2 style={styles.qTitle}>Question {idx + 1}</h2>
+                <p style={styles.questionText}>{question}</p>
+
+                {ans ? (
+                  <div style={styles.answerContainer}>
+                    <p style={styles.answerLine}>
+                      <strong>Transcript: </strong>
+                      {ans.transcript}
+                    </p>
+
+                    {ans.assessment ? (
+                      <>
+                        <p style={styles.answerLine}>
+                          <strong>Rating:</strong> {ans.assessment.rating}
+                        </p>
+                        <p style={styles.answerLine}>
+                          <strong>Explanation:</strong> {ans.assessment.explanation}
+                        </p>
+                        <p style={styles.answerLine}>
+                          <strong>Ideal Answer:</strong> {ans.assessment.ideal_answer}
+                        </p>
+                      </>
+                    ) : (
+                      <p style={styles.noAssessment}>No LLM assessment available.</p>
+                    )}
+                  </div>
+                ) : (
+                  <p style={styles.noAnswer}>
+                    No answer recorded
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={styles.buttonArea}>
+          <button style={styles.proceedButton} onClick={handleProceed}>
+            View Final Summary & Chart
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
+
+// Inline styles for a consistent, modern look
+const styles = {
+  container: {
+    display: 'flex',
+    flexDirection: 'column',
+    fontFamily: 'Poppins, sans-serif',
+    minHeight: '100vh'
+  },
+  header: {
+    padding: '2rem 1rem',
+    background: 'linear-gradient(135deg, #6EE2F5 0%, #6454F0 100%)',
+    textAlign: 'center',
+    color: '#fff',
+    marginBottom: '2rem'
+  },
+  headerTitle: {
+    margin: 0,
+    fontWeight: 600
+  },
+  headerSubtitle: {
+    marginTop: '0.5rem',
+    fontSize: '1rem',
+    opacity: 0.9
+  },
+  content: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    padding: '0 1rem',
+    flex: 1
+  },
+  assessmentList: {
+    maxWidth: '700px',
+    width: '100%'
+  },
+  qCard: {
+    backgroundColor: '#fff',
+    borderRadius: '8px',
+    boxShadow: '0 2px 6px rgba(0,0,0,0.12)',
+    marginBottom: '1.5rem',
+    padding: '1rem'
+  },
+  qTitle: {
+    margin: 0,
+    marginBottom: '0.5rem',
+    fontWeight: 600,
+    fontSize: '1.1rem',
+    color: '#333'
+  },
+  questionText: {
+    marginBottom: '1rem',
+    fontSize: '0.95rem',
+    color: '#444'
+  },
+  answerContainer: {
+    marginLeft: '1rem'
+  },
+  answerLine: {
+    marginBottom: '0.5rem',
+    color: '#444'
+  },
+  noAssessment: {
+    marginLeft: '1rem',
+    color: '#999'
+  },
+  noAnswer: {
+    marginLeft: '1rem',
+    color: 'red'
+  },
+  buttonArea: {
+    marginTop: '2rem',
+    marginBottom: '2rem'
+  },
+  proceedButton: {
+    padding: '0.8rem 1.5rem',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontFamily: 'Poppins, sans-serif',
+    fontWeight: 500,
+    backgroundColor: '#6454F0',
+    color: '#fff',
+    boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+    fontSize: '1rem'
+  }
+};
 
 export default AnswerAssessment;
