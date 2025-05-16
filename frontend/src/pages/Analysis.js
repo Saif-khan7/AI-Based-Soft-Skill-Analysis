@@ -145,7 +145,7 @@ function Analysis() {
     fillerRate,
     totalWordsSpoken,
     skillAnalysis,
-    emotionTimeline
+
   } = analysisData;
 
   return (

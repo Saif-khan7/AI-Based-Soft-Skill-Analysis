@@ -24,6 +24,7 @@ import requests
 from pymongo import MongoClient
 from bson.objectid import ObjectId
 
+NUM_TECH_Q = 2 
 # ---------------------------------------------------
 # Load environment variables
 # ---------------------------------------------------
@@ -36,9 +37,11 @@ MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017")
 client = MongoClient(MONGO_URI)
 db = client["soft-skill"]
 
+# Collections
 resume_collection = db["resume"]
-questions_collection = db["questions"]
+questions_collection = db["questions"]  # still optional
 interviews_collection = db["interviews"]
+soft_skill_coll = db["softSkillQuestions"]  # must match your actual collection name
 
 # Configure Gemini
 genai.configure(api_key=GEMINI_API_KEY)
@@ -81,7 +84,7 @@ def compute_speech_metrics(transcription_result):
     total_words = len(words)
     total_minutes = total_speaking_time / 60.0
 
-    wpm = total_words / total_minutes if total_minutes > 0 else 0.0
+    wpm = total_words / total_minutes if total_minutes>0 else 0.0
     filler_counter = Counter(w for w in words if w in FILLER_WORDS)
     filler_count = sum(filler_counter.values())
     filler_rate = filler_count / total_words if total_words else 0.0
@@ -95,10 +98,16 @@ def compute_speech_metrics(transcription_result):
 
 def transcribe_audio(audio_file_path):
     result = whisper_model.transcribe(audio_file_path, language=None)
-    transcript = result.get("text", "")
-    detected_lang = result.get("language", "unknown")
+    transcript = result.get("text","")
+    detected_lang = result.get("language","unknown")
     metrics = compute_speech_metrics(result)
     return detected_lang.upper(), transcript, metrics
+
+# ---------------------------------------------------
+# Helper to remove code fences from Gemini output
+# ---------------------------------------------------
+def remove_code_fences(gemini_text: str) -> str:
+    return gemini_text.replace("```json", "").replace("```", "").strip()
 
 # ---------------------------------------------------
 # 1) Audio Endpoint
@@ -212,14 +221,7 @@ def log_emotion():
     return jsonify({"message":"Emotion logged"})
 
 # ---------------------------------------------------
-# Helper: remove code fences from Gemini output
-# ---------------------------------------------------
-def remove_code_fences(gemini_text: str) -> str:
-    cleaned = gemini_text.replace("```json", "").replace("```", "").strip()
-    return cleaned
-
-# ---------------------------------------------------
-# 4) Resume Analysis Endpoint
+# 4) Resume Analysis Endpoint (unchanged)
 # ---------------------------------------------------
 def extract_text_from_pdf(pdf_path):
     text_content = ""
@@ -382,10 +384,18 @@ No explanation, no code fences, just bullet items.
     return jsonify({"skills_summary": summary_text})
 
 # ---------------------------------------------------
-# 6) Start Interview => Generate skill-based Q's
+# 6) Start Interview => 5 technical + 6 soft skill Qs
 # ---------------------------------------------------
 @app.route("/api/startInterview", methods=["POST"])
 def start_interview():
+    """
+    1) Summarize the resume's key_skills if missing
+    2) Generate 5 skill-based (technical) Qs from Gemini
+    3) Fetch 1 random question from each of the 6 soft skill sections in softSkillQuestions:
+       communication, teamwork, problemSolving, adaptability, leadership, timeManagement
+    4) Merge them -> final questions (total 11)
+    5) Create interview doc
+    """
     clerk_email = request.headers.get("Clerk-User-Email")
     if not clerk_email:
         return jsonify({"error": "Not authenticated"}), 401
@@ -397,10 +407,9 @@ def start_interview():
     if not gemini_model:
         return jsonify({"error": "Gemini model not loaded"}), 500
 
+    # Summarize if needed
     skills_summary = last_resume.get("skills_summary", "").strip()
-
     if not skills_summary:
-        # Summarize automatically if missing
         analysis_json = last_resume.get("analysis", "")
         if not analysis_json:
             return jsonify({"error": "No analysis found. Please upload resume first."}), 400
@@ -437,24 +446,24 @@ No explanation, no code fences, just bullet items.
     if not skills_summary or skills_summary.lower().startswith("error"):
         return jsonify({"error": "Failed to summarize skills automatically."}), 400
 
+    # 1) Generate the 5 skill-based (technical) Qs from the resume skills
     lines = []
     for ln in skills_summary.split("\n"):
-        skill = ln.strip("-").strip()
-        if skill:
-            lines.append(skill)
+        sk = ln.strip("-").strip()
+        if sk:
+            lines.append(sk)
     lines = list(dict.fromkeys(lines))[:10]
-
     bullet_list = "\n".join([f"- {s}" for s in lines])
 
-    gen_prompt = f"""
+    tech_prompt = f"""
 Below is the candidate's skill list (ignore any mention of lacking skill):
 {bullet_list}
 
-Generate exactly 5 skill-based interview questions.
+Generate exactly {NUM_TECH_Q} skill-based interview questions.
 Each question must mention at least two distinct skill names from above 
 and ask how the candidate has used them in real projects.
 
-Return only a valid JSON array of 5 strings, with no extra commentary or metadata.
+Return only a valid JSON array of {NUM_TECH_Q} strings, with no extra commentary or metadata.
 If you cannot comply, return "Unable to comply."
 """
 
@@ -466,7 +475,7 @@ If you cannot comply, return "Unable to comply."
         except Exception as e:
             return f"Error calling model: {e}"
 
-    raw_output = call_model(gen_prompt)
+    raw_output = call_model(tech_prompt)
 
     def parse_json_arr(txt):
         try:
@@ -477,8 +486,9 @@ If you cannot comply, return "Unable to comply."
         except:
             return [txt]
 
-    questions = parse_json_arr(raw_output)
+    skill_questions = parse_json_arr(raw_output)
 
+    # optional check each question references 2+ skill names
     def skill_count_in_q(q):
         q_lower = q.lower()
         found = []
@@ -487,34 +497,52 @@ If you cannot comply, return "Unable to comply."
                 found.append(sk)
         return len(set(found))
 
-    # If not all have 2+ skills, try once more
     all_ok = True
-    for q in questions:
+    for q in skill_questions:
         if skill_count_in_q(q) < 2:
             all_ok = False
             break
     if not all_ok:
-        raw_output2 = call_model(gen_prompt)
-        questions = parse_json_arr(raw_output2)
+        raw2 = call_model(tech_prompt)
+        skill_questions = parse_json_arr(raw2)
+
+    # 2) 6 soft-skill sections to pick from the DB: communication, teamwork, etc.
+    sections = ["communication", "teamwork", "problemSolving", "adaptability", "leadership", "timeManagement"]
+    soft_skill_questions = []
+    import random
+    for section in sections:
+        doc = db["softSkillQuestions"].find_one({"section": section})
+        if doc and doc.get("questions"):
+            qlist = doc["questions"]
+            chosen = random.choice(qlist)
+            soft_skill_questions.append(chosen)
+        else:
+            soft_skill_questions.append(f"[Missing question for {section}]")
+
+    # Combine final list: 5 technical + 6 soft skill => 11 total
+    final_questions = skill_questions + soft_skill_questions
 
     interview_doc = {
         "email": clerk_email,
-        "questions": questions,
+        "questions": final_questions,
         "answers": [],
         "emotionTimeline": [],
         "status": "in_progress",
-        "created_at": datetime.utcnow()
+        "created_at": datetime.utcnow(),
+        "technicalCount": NUM_TECH_Q ,
+        "softSkillCount": 6,  # next 6 are soft skill Qs
+        "softSkillSections": sections
     }
     res = interviews_collection.insert_one(interview_doc)
 
     return jsonify({
-        "message": "Interview started with skill-based questions",
+        "message": "Interview started with skill-based + 6 soft-skill questions",
         "interviewId": str(res.inserted_id),
-        "questions": questions
+        "questions": final_questions
     })
 
 # ---------------------------------------------------
-# 7) Submit Answer (with Gemini-based assessment), Finalize, getAnalysis
+# 7) /api/submitAnswer => Transcribe, store, LLM rating
 # ---------------------------------------------------
 @app.route("/api/submitAnswer", methods=["POST"])
 def submit_answer():
@@ -542,20 +570,19 @@ def submit_answer():
     except:
         return jsonify({"error": "Invalid interviewId"}), 400
 
-    # 1) Find interview
     interview = interviews_collection.find_one({"_id": obj_id, "email": clerk_email})
     if not interview:
         return jsonify({"error": "Interview not found"}), 404
 
     try:
-        # 2) Save and transcribe
+        # save and transcribe audio
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
             audio_file.save(tmp.name)
             tmp_path = tmp.name
 
         lang, transcript, metrics = transcribe_audio(tmp_path)
 
-        # 3) Insert the new answer doc
+        old_len = len(interview.get("answers", []))
         answer_doc = {
             "questionIndex": question_idx,
             "transcript": transcript,
@@ -566,20 +593,15 @@ def submit_answer():
             "fillerWordsUsed": metrics["filler_words_used"],
             "timestamp": datetime.utcnow()
         }
-
-        old_len = len(interview.get("answers", []))
-        # push the doc
         interviews_collection.update_one(
             {"_id": obj_id},
             {"$push": {"answers": answer_doc}}
         )
 
-        # 4) Optionally call Gemini to assess the answer
-        # We'll store the rating, explanation, ideal_answer in "assessment"
+        # Optional: call LLM to assess the answer with rating, explanation, ideal answer.
         assessment = {}
         try:
             if gemini_model:
-                # get question text
                 question_text = ""
                 if 0 <= question_idx < len(interview["questions"]):
                     question_text = interview["questions"][question_idx]
@@ -609,12 +631,10 @@ User's Answer Transcript: {transcript}
                 except:
                     assessment = {"rating": 3, "explanation": raw[:200], "ideal_answer": "No parse"}
             else:
-                assessment = {"rating": 3, "explanation": "Gemini model not loaded", "ideal_answer": ""}
+                assessment = {"rating": 3, "explanation": "Gemini not loaded", "ideal_answer": ""}
         except Exception as e:
             assessment = {"rating": 3, "explanation": f"Error: {str(e)}", "ideal_answer": ""}
 
-        # 5) Update that newly inserted answer with the assessment
-        # We'll re-fetch the interview or just do array indexing
         interviews_collection.update_one(
             {"_id": obj_id},
             {"$set": {f"answers.{old_len}.assessment": assessment}}
@@ -626,7 +646,6 @@ User's Answer Transcript: {transcript}
             "metrics": metrics,
             "assessment": assessment
         })
-
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
@@ -634,25 +653,28 @@ User's Answer Transcript: {transcript}
         if tmp_path and os.path.exists(tmp_path):
             os.remove(tmp_path)
 
+# ---------------------------------------------------
+# 8) finalizeInterview => mark as completed
+# ---------------------------------------------------
 @app.route("/api/finalizeInterview", methods=["POST"])
 def finalize_interview():
     clerk_email = request.headers.get("Clerk-User-Email")
     if not clerk_email:
-        return jsonify({"error": "Not authenticated"}), 401
+        return jsonify({"error": "Not authenticated"}),401
 
     data = request.json
     interview_id = data.get("interviewId")
     if not interview_id:
-        return jsonify({"error": "Missing interviewId"}), 400
+        return jsonify({"error":"Missing interviewId"}),400
 
     try:
         obj_id = ObjectId(interview_id)
     except:
-        return jsonify({"error": "Invalid interviewId"}), 400
+        return jsonify({"error":"Invalid interviewId"}),400
 
     interview = interviews_collection.find_one({"_id": obj_id, "email": clerk_email})
     if not interview:
-        return jsonify({"error": "Interview not found"}), 404
+        return jsonify({"error":"Interview not found"}),404
 
     interviews_collection.update_one(
         {"_id": obj_id},
@@ -661,110 +683,151 @@ def finalize_interview():
             "completed_at": datetime.utcnow()
         }}
     )
-    return jsonify({"message": "Interview finalized"})
+    return jsonify({"message":"Interview finalized"})
 
+# ---------------------------------------------------
+# 9) /api/getAnalysis  – speech stats + skill bullets + emotion insight
+# ---------------------------------------------------
 @app.route("/api/getAnalysis", methods=["POST"])
 def get_analysis():
-    """
-    Returns final summary (LLM-based) + emotion timeline
-    We do NOT return the question/answer details here 
-    because that's in /api/getAssessment now.
-    """
     clerk_email = request.headers.get("Clerk-User-Email")
     if not clerk_email:
         return jsonify({"error": "Not authenticated"}), 401
 
-    data = request.json
-    interview_id = data.get("interviewId")
+    interview_id = (request.json or {}).get("interviewId")
     if not interview_id:
         return jsonify({"error": "Missing interviewId"}), 400
-
     try:
         obj_id = ObjectId(interview_id)
-    except:
+    except Exception:
         return jsonify({"error": "Invalid interviewId"}), 400
 
     interview = interviews_collection.find_one({"_id": obj_id, "email": clerk_email})
     if not interview:
         return jsonify({"error": "Interview not found"}), 404
 
-    # We'll gather stats: average filler rate, average rating, etc.
-    answers = interview.get("answers", [])
+    answers          = interview.get("answers", [])
     emotion_timeline = interview.get("emotionTimeline", [])
-    # final user status
-    status = interview.get("status", "in_progress")
-    completed_at = interview.get("completed_at", None)
+    status           = interview.get("status", "in_progress")
+    completed_at     = interview.get("completed_at")
 
-    # let's compute filler usage, average rating
-    total_filler = 0
-    total_words = 0
-    count_answered = 0
-    total_rating = 0
-    rating_count = 0
+    # ---------- speech metrics ------------------------------------------------
+    total_words  = sum(len(a.get("transcript", "").split()) for a in answers)
+    total_filler = sum(a.get("fillerCount", 0) for a in answers)
+    ratings      = [a["assessment"]["rating"]
+                    for a in answers
+                    if isinstance(a.get("assessment"), dict) and "rating" in a["assessment"]]
 
-    for ans in answers:
-        count_answered += 1
-        if ans.get("fillerCount"):
-            total_filler += ans["fillerCount"]
-        # You might approximate total words from transcript's word count or use wpm
-        if ans.get("transcript"):
-            word_count = len(ans["transcript"].split())
-            total_words += word_count
+    avg_rating  = round(sum(ratings) / len(ratings), 2) if ratings else 3.0
+    filler_rate = round(total_filler / total_words, 3) if total_words else 0.0
 
-        # rating from gemini
-        assessment = ans.get("assessment")
-        if assessment and isinstance(assessment, dict):
-            r = assessment.get("rating")
-            if r and isinstance(r, int):
-                total_rating += r
-                rating_count += 1
+    # ---------- emotion statistics -------------------------------------------
+    import statistics
+    buckets = {}
+    for snap in emotion_timeline:
+        for emo, val in (snap.get("distribution") or {}).items():
+            buckets.setdefault(emo, []).append(float(val))
 
-    avg_rating = total_rating / rating_count if rating_count else 3
-    overall_filler_rate = float(total_filler)/float(total_words) if total_words>0 else 0.0
+    emo_avg = {e: round(sum(v) / len(v), 1)
+               for e, v in buckets.items()} if buckets else {}
+    emo_std = {e: round(statistics.pstdev(v), 1)
+               for e, v in buckets.items() if len(v) > 1}
 
-    # We'll call Gemini to create a final summary about:
-    # - communication
-    # - confidence
-    # - overall soft skills
-    final_summary = ""
-    try:
-        if gemini_model:
-            # Build a prompt referencing these stats
+    def top_k(d, k=2):
+        return ", ".join(f"{e} ({v}%)"
+                         for e, v in sorted(d.items(), key=lambda x: x[1], reverse=True)[:k])
+
+    emotion_digest = ("No emotion captured."
+                      if not emo_avg
+                      else f"Dominant → {top_k(emo_avg)} | Most variable → {top_k(emo_std)}")
+
+    # ---------- per-skill bullet analysis (unchanged) -------------------------
+    skill_order = interview.get("softSkillSections",
+        ["communication","teamwork","problemSolving","adaptability","leadership","timeManagement"])
+    skillAnalysis = {}
+    if gemini_model:
+        for i, skill in enumerate(skill_order):
+            q_idx = 5 + i
+            ans   = next((a for a in answers if a["questionIndex"] == q_idx), None)
+            if not ans:
+                skillAnalysis[skill] = f"No answer provided for {skill}."
+                continue
+            transcript = ans.get("transcript", "")
+            rating     = ans.get("assessment", {}).get("rating", 3)
+
             prompt = f"""
-You are an evaluator of soft skills. 
-We have an interview with the following stats:
-- # of answers: {count_answered}
-- average rating: {avg_rating:.2f} (1..5 scale)
-- filler rate: {overall_filler_rate:.3f} 
-- total words spoken: {total_words}
+You are evaluating the candidate's {skill} skill.
+Transcript:
+\"\"\"{transcript}\"\"\"
+Numeric rating: {rating}/5.
+Give up to 5 bullet-points (strengths / weaknesses)."""
+            try:
+                txt = gemini_model.generate_content(prompt).text or ""
+                skillAnalysis[skill] = remove_code_fences(txt)
+            except Exception as e:
+                skillAnalysis[skill] = f"Error: {e}"
+    else:
+        skillAnalysis = {s: "Gemini not loaded." for s in skill_order}
 
-The user wants a final summary of their communication skills, confidence level, 
-and general soft skills, referencing the rating and filler usage. 
-Return only a short textual summary (no code blocks).
-"""
-            resp = gemini_model.generate_content(prompt)
-            final_summary = resp.text if resp and resp.text else ""
-        else:
-            final_summary = "Gemini model not loaded"
-    except Exception as e:
-        final_summary = f"Error generating final summary: {str(e)}"
+    # ---------- final natural-language summary & emotion bullets -------------
+    final_summary   = "Gemini not loaded"
+    emotion_bullets = []
 
-    # Return final summary + emotion timeline data
+    if gemini_model:
+        try:
+            summary_prompt = f"""
+You are an interview evaluator.
+
+Speech metrics → rating {avg_rating}/5, filler {filler_rate}, words {total_words}.
+Emotions → {emotion_digest}
+
+Interpretation rules:
+- A predominantly *neutral* face (e.g., >60 %) usually signals calm composure, **not** disengagement.
+- A predominantly *happy* or *surprise* face indicates enthusiasm / positive engagement.
+- Anger, sadness, fear or disgust in high proportions may indicate stress or negativity.
+
+Write 3–4 sentences assessing communication, confidence and engagement,
+using BOTH speech and emotion evidence.  No code fences."""
+            final_summary = gemini_model.generate_content(summary_prompt).text.strip()
+        except Exception as e:
+            final_summary = f"(Could not generate summary – {e})"
+
+        try:
+            bullet_prompt = f"""
+Given these average facial-emotion percentages:
+{json.dumps(emo_avg, indent=2)}
+
+Using the same interpretation rules as above (neutral = calm,
+happy/surprise = enthusiastic),
+list up to 4 concise bullet points on engagement, stress level and authenticity.
+No code fences."""
+            raw = gemini_model.generate_content(bullet_prompt).text or ""
+            emotion_bullets = [l.lstrip("•- ").strip() for l in raw.splitlines() if l.strip()]
+        except Exception:
+            emotion_bullets = ["Could not analyse emotions via LLM."]
+
+    # ---------- response ------------------------------------------------------
     return jsonify({
         "status": status,
         "completed_at": completed_at,
+        "emotionTimeline": emotion_timeline,
+        "emotionAverages": emo_avg,
+        "emotionStd": emo_std,
+        "emotionAnalysis": emotion_bullets,
+        "avgRating": avg_rating,
+        "fillerRate": filler_rate,
+        "totalWordsSpoken": total_words,
         "final_summary": final_summary,
-        "emotionTimeline": emotion_timeline
+        "skillAnalysis": skillAnalysis
     })
 
 
+
+# ---------------------------------------------------
+# 10) getAssessment => Q & A details for AnswerAssessment page
+# ---------------------------------------------------
 @app.route("/api/getAssessment", methods=["POST"])
 def get_assessment():
-    """
-    Returns the interview's questions + answers (with Gemini-based rating), 
-    but NOT the final summary or emotion data.
-    This is for the 'AnswerAssessment' page.
-    """
     clerk_email = request.headers.get("Clerk-User-Email")
     if not clerk_email:
         return jsonify({"error": "Not authenticated"}), 401
@@ -783,14 +846,12 @@ def get_assessment():
     if not interview:
         return jsonify({"error": "Interview not found"}), 404
 
-    # We only return questions + answers (with any assessment)
     return jsonify({
         "questions": interview.get("questions", []),
         "answers": interview.get("answers", []),
         "status": interview.get("status", "in_progress"),
         "completed_at": interview.get("completed_at", None)
     })
-
 
 if __name__ == "__main__":
     app.run(debug=True)

@@ -1,112 +1,59 @@
-import os
-import re
-import cv2
-import base64
-import json
-import numpy as np
-import tempfile
-import traceback
+import os, re, cv2, base64, json, numpy as np, tempfile, traceback
 from collections import Counter
 from datetime import datetime
-
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from dotenv import load_dotenv; load_dotenv()
 
-from dotenv import load_dotenv
-load_dotenv()
-
-import PyPDF2
-import docx2txt
-import google.generativeai as genai
+import PyPDF2, docx2txt, google.generativeai as genai
 from deepface import DeepFace
-import whisper
-import requests
+import whisper, requests
 from pymongo import MongoClient
 from bson.objectid import ObjectId
 
-# ---------------------------------------------------
-# Load environment variables
-# ---------------------------------------------------
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", None)
-if not GEMINI_API_KEY:
-    print("WARNING: GEMINI_API_KEY not set. Check your .env file.")
+NUM_TECH_Q = 2            # default fallback
 
-MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017")
+# ─────────────────────────── DB & Gemini init ──────────────────────────────
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+MONGO_URI      = os.getenv("MONGO_URI","mongodb://localhost:27017")
 
 client = MongoClient(MONGO_URI)
-db = client["soft-skill"]
+db     = client["soft-skill"]
 
-# Collections
-resume_collection = db["resume"]
-questions_collection = db["questions"]  # still optional
-interviews_collection = db["interviews"]
-soft_skill_coll = db["softSkillQuestions"]  # must match your actual collection name
+resume_collection      = db["resume"]
+interviews_collection  = db["interviews"]
 
-# Configure Gemini
 genai.configure(api_key=GEMINI_API_KEY)
 try:
     gemini_model = genai.GenerativeModel("gemini-1.5-flash")
 except Exception as e:
-    print("Error loading Gemini model:", e)
-    gemini_model = None
+    print("Gemini load error:", e); gemini_model = None
 
-app = Flask(__name__)
-CORS(app)
+app = Flask(__name__); CORS(app)
 
-# ---------------------------------------------------
-# Whisper Setup
-# ---------------------------------------------------
+# ─────────────────────────── Whisper helpers ───────────────────────────────
 whisper_model = whisper.load_model("base")
-FILLER_WORDS = {"um","uh","like","you","know","er","ah","so","well","actually"}
+FILLER_WORDS  = {"um","uh","like","you","know","er","ah","so","well","actually"}
 
-def compute_speech_metrics(transcription_result):
-    segments = transcription_result.get("segments", [])
-    if not segments:
-        return {
-            "wpm": 0.0,
-            "filler_rate": 0.0,
-            "filler_count": 0,
-            "filler_words_used": {}
-        }
+def compute_speech_metrics(res):
+    seg  = res.get("segments",[])
+    if not seg: return dict(wpm=0,filler_rate=0,filler_count=0,filler_words_used={})
+    tot_time   = seg[-1]["end"]-seg[0]["start"]
+    words      = re.findall(r"\w+"," ".join(s["text"] for s in seg).lower())
+    wpm        = len(words)/(tot_time/60) if tot_time else 0
+    fillers    = Counter(w for w in words if w in FILLER_WORDS)
+    return dict(
+        wpm           = wpm,
+        filler_rate   = sum(fillers.values())/len(words) if words else 0,
+        filler_count  = sum(fillers.values()),
+        filler_words_used = dict(fillers)
+    )
 
-    total_speaking_time = segments[-1]["end"] - segments[0]["start"]
-    if total_speaking_time <= 0:
-        return {
-            "wpm": 0.0,
-            "filler_rate": 0.0,
-            "filler_count": 0,
-            "filler_words_used": {}
-        }
+def transcribe_audio(path):
+    res = whisper_model.transcribe(path, language=None)
+    return res.get("language","UNK").upper(), res.get("text",""), compute_speech_metrics(res)
 
-    full_text = " ".join(s["text"] for s in segments)
-    words = re.findall(r"\w+", full_text.lower())
-    total_words = len(words)
-    total_minutes = total_speaking_time / 60.0
-
-    wpm = total_words / total_minutes if total_minutes>0 else 0.0
-    filler_counter = Counter(w for w in words if w in FILLER_WORDS)
-    filler_count = sum(filler_counter.values())
-    filler_rate = filler_count / total_words if total_words else 0.0
-
-    return {
-        "wpm": wpm,
-        "filler_rate": filler_rate,
-        "filler_count": filler_count,
-        "filler_words_used": dict(filler_counter)
-    }
-
-def transcribe_audio(audio_file_path):
-    result = whisper_model.transcribe(audio_file_path, language=None)
-    transcript = result.get("text","")
-    detected_lang = result.get("language","unknown")
-    metrics = compute_speech_metrics(result)
-    return detected_lang.upper(), transcript, metrics
-
-# ---------------------------------------------------
-# Helper to remove code fences from Gemini output
-# ---------------------------------------------------
-def remove_code_fences(gemini_text: str) -> str:
-    return gemini_text.replace("```json", "").replace("```", "").strip()
+def remove_code_fences(t): return t.replace("```json","").replace("```","").strip()
 
 # ---------------------------------------------------
 # 1) Audio Endpoint
@@ -458,11 +405,11 @@ No explanation, no code fences, just bullet items.
 Below is the candidate's skill list (ignore any mention of lacking skill):
 {bullet_list}
 
-Generate exactly 5 skill-based interview questions.
+Generate exactly {NUM_TECH_Q} skill-based interview questions.
 Each question must mention at least two distinct skill names from above 
 and ask how the candidate has used them in real projects.
 
-Return only a valid JSON array of 5 strings, with no extra commentary or metadata.
+Return only a valid JSON array of {NUM_TECH_Q} strings, with no extra commentary or metadata.
 If you cannot comply, return "Unable to comply."
 """
 
@@ -528,7 +475,7 @@ If you cannot comply, return "Unable to comply."
         "emotionTimeline": [],
         "status": "in_progress",
         "created_at": datetime.utcnow(),
-        "technicalCount": 5,  # first 5 are technical Qs
+        "technicalCount": NUM_TECH_Q ,
         "softSkillCount": 6,  # next 6 are soft skill Qs
         "softSkillSections": sections
     }
@@ -541,117 +488,96 @@ If you cannot comply, return "Unable to comply."
     })
 
 # ---------------------------------------------------
-# 7) /api/submitAnswer => Transcribe, store, LLM rating
+# 7) /api/submitAnswer — UPDATED
 # ---------------------------------------------------
 @app.route("/api/submitAnswer", methods=["POST"])
 def submit_answer():
     clerk_email = request.headers.get("Clerk-User-Email")
     if not clerk_email:
-        return jsonify({"error": "Not authenticated"}), 401
+        return jsonify({"error":"Not authenticated"}),401
 
-    interview_id = request.form.get("interviewId")
-    question_idx_str = request.form.get("questionIndex", "0")
-    try:
-        question_idx = int(question_idx_str)
-    except:
-        question_idx = 0
+    interview_id  = request.form.get("interviewId")
+    q_idx         = int(request.form.get("questionIndex","0"))
+    if not interview_id: return jsonify({"error":"Missing interviewId"}),400
+    if "audio" not in request.files: return jsonify({"error":"No audio file"}),400
 
-    if not interview_id:
-        return jsonify({"error": "Missing interviewId"}), 400
-    if "audio" not in request.files:
-        return jsonify({"error": "No audio file"}), 400
+    obj_id = ObjectId(interview_id)
+    interview = interviews_collection.find_one({"_id":obj_id,"email":clerk_email})
+    if not interview: return jsonify({"error":"Interview not found"}),404
 
-    audio_file = request.files["audio"]
     tmp_path = None
-
     try:
-        obj_id = ObjectId(interview_id)
-    except:
-        return jsonify({"error": "Invalid interviewId"}), 400
-
-    interview = interviews_collection.find_one({"_id": obj_id, "email": clerk_email})
-    if not interview:
-        return jsonify({"error": "Interview not found"}), 404
-
-    try:
-        # save and transcribe audio
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-            audio_file.save(tmp.name)
-            tmp_path = tmp.name
-
+        with tempfile.NamedTemporaryFile(delete=False,suffix=".wav") as tmp:
+            request.files["audio"].save(tmp.name); tmp_path = tmp.name
         lang, transcript, metrics = transcribe_audio(tmp_path)
 
-        old_len = len(interview.get("answers", []))
-        answer_doc = {
-            "questionIndex": question_idx,
-            "transcript": transcript,
-            "language": lang,
-            "wpm": metrics["wpm"],
-            "fillerRate": metrics["filler_rate"],
-            "fillerCount": metrics["filler_count"],
-            "fillerWordsUsed": metrics["filler_words_used"],
-            "timestamp": datetime.utcnow()
-        }
-        interviews_collection.update_one(
-            {"_id": obj_id},
-            {"$push": {"answers": answer_doc}}
+        # store raw answer first ------------------------------------------------
+        ans_doc = dict(
+            questionIndex = q_idx,
+            transcript    = transcript,
+            language      = lang,
+            wpm           = metrics["wpm"],
+            fillerRate    = metrics["filler_rate"],
+            fillerCount   = metrics["filler_count"],
+            fillerWordsUsed = metrics["filler_words_used"],
+            timestamp     = datetime.utcnow()
         )
+        interviews_collection.update_one({"_id":obj_id},{"$push":{"answers":ans_doc}})
+        answer_pos = len(interview.get("answers",[]))      # zero-based index *after* push
 
-        # Optional: call LLM to assess the answer with rating, explanation, ideal answer.
-        assessment = {}
-        try:
-            if gemini_model:
-                question_text = ""
-                if 0 <= question_idx < len(interview["questions"]):
-                    question_text = interview["questions"][question_idx]
+        # ----- LLM assessment --------------------------------------------------
+        assessment  = {}
+        if gemini_model:
+            tech_cnt  = interview.get("technicalCount", NUM_TECH_Q)   ##### <NEW>
+            is_soft   = q_idx >= tech_cnt                               ##### <NEW>
+            q_text    = interview["questions"][q_idx] if q_idx < len(interview["questions"]) else ""
 
+            if is_soft:                                                 ##### <NEW>
                 prompt = f"""
-You are an expert interviewer. 
-Rate the user's answer on a scale of 1 to 5 (5=excellent). 
-Provide a short explanation and a short 'ideal answer' summary. 
-Return only valid JSON:
+You are a behavioural-interview assessor.
+
+Return JSON:
 {{
-  "rating": integer,
-  "explanation": string,
+  "rating":     1-5,
+  "strengths":  [string]  // max 5
+  "improvements":[string] // max 5
+}}
+
+Question: {q_text}
+Answer transcript: {transcript}
+"""
+            else:  # technical
+                prompt = f"""
+You are a technical interviewer.
+
+Return JSON:
+{{
+  "rating":       1-5,
+  "explanation":  string,
   "ideal_answer": string
 }}
 
-Question: {question_text}
-User's Answer Transcript: {transcript}
+Question: {q_text}
+Answer transcript: {transcript}
 """
-                resp = gemini_model.generate_content(prompt)
-                raw = resp.text if (resp and resp.text) else "{}"
-                raw = remove_code_fences(raw)
-                try:
-                    parsed = json.loads(raw)
-                    if not isinstance(parsed, dict):
-                        parsed = {"rating": 3, "explanation": "Parsing error", "ideal_answer": "N/A"}
-                    assessment = parsed
-                except:
-                    assessment = {"rating": 3, "explanation": raw[:200], "ideal_answer": "No parse"}
-            else:
-                assessment = {"rating": 3, "explanation": "Gemini not loaded", "ideal_answer": ""}
-        except Exception as e:
-            assessment = {"rating": 3, "explanation": f"Error: {str(e)}", "ideal_answer": ""}
 
+            try:
+                raw = remove_code_fences(gemini_model.generate_content(prompt).text or "{}")
+                assessment = json.loads(raw) if raw.strip().startswith("{") else {"rating":3,"explanation":raw}
+            except Exception as e:
+                assessment = {"rating":3,"explanation":f"Parse error: {e}"}
+
+        # store assessment ------------------------------------------------------
         interviews_collection.update_one(
-            {"_id": obj_id},
-            {"$set": {f"answers.{old_len}.assessment": assessment}}
+            {"_id":obj_id},
+            {"$set":{f"answers.{answer_pos}.assessment":assessment}}
         )
 
-        return jsonify({
-            "message": "Answer submitted",
-            "transcript": transcript,
-            "metrics": metrics,
-            "assessment": assessment
-        })
+        return jsonify({"message":"Answer submitted","metrics":metrics,"assessment":assessment})
     except Exception as e:
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        traceback.print_exc(); return jsonify({"error":str(e)}),500
     finally:
-        if tmp_path and os.path.exists(tmp_path):
-            os.remove(tmp_path)
-
+        if tmp_path and os.path.exists(tmp_path): os.remove(tmp_path)
 # ---------------------------------------------------
 # 8) finalizeInterview => mark as completed
 # ---------------------------------------------------
@@ -685,131 +611,95 @@ def finalize_interview():
     return jsonify({"message":"Interview finalized"})
 
 # ---------------------------------------------------
-# 9) getAnalysis => final summary + skill bullet points + emotion timeline
+# 9) /api/getAnalysis — UPDATED
 # ---------------------------------------------------
 @app.route("/api/getAnalysis", methods=["POST"])
 def get_analysis():
     clerk_email = request.headers.get("Clerk-User-Email")
-    if not clerk_email:
-        return jsonify({"error": "Not authenticated"}),401
+    if not clerk_email: return jsonify({"error":"Not authenticated"}),401
 
-    data = request.json
-    interview_id = data.get("interviewId")
-    if not interview_id:
-        return jsonify({"error":"Missing interviewId"}),400
+    iid = (request.json or {}).get("interviewId")
+    if not iid: return jsonify({"error":"Missing interviewId"}),400
+    try: obj_id = ObjectId(iid)
+    except: return jsonify({"error":"Invalid interviewId"}),400
 
-    try:
-        obj_id = ObjectId(interview_id)
-    except:
-        return jsonify({"error":"Invalid interviewId"}),400
+    interview = interviews_collection.find_one({"_id":obj_id,"email":clerk_email})
+    if not interview: return jsonify({"error":"Interview not found"}),404
 
-    interview = interviews_collection.find_one({"_id": obj_id, "email": clerk_email})
-    if not interview:
-        return jsonify({"error":"Interview not found"}),404
+    answers       = interview.get("answers",[])
+    emo_timeline  = interview.get("emotionTimeline",[])
+    tech_cnt      = interview.get("technicalCount", NUM_TECH_Q)      ##### <NEW>
 
-    answers = interview.get("answers", [])
-    emotion_timeline = interview.get("emotionTimeline", [])
-    status = interview.get("status", "in_progress")
-    completed_at = interview.get("completed_at", None)
+    # ----- speech stats -------------------------------------------------------
+    tot_words  = sum(len(a.get("transcript","").split()) for a in answers)
+    tot_filler = sum(a.get("fillerCount",0) for a in answers)
+    ratings    = [a.get("assessment",{}).get("rating",3) for a in answers if a.get("assessment")]
+    avg_rating = round(sum(ratings)/len(ratings),2) if ratings else 3.0
+    filler_rt  = round(tot_filler/tot_words,3) if tot_words else 0.0
 
-    # Basic stats: filler, rating, etc.
-    total_filler = 0
-    total_words = 0
-    total_rating = 0
-    rating_count = 0
+    # ----- emotion aggregate (unchanged) --------------------------------------
+    import statistics
+    bucket={}
+    for snap in emo_timeline:
+        for emo,v in (snap.get("distribution") or {}).items():
+            bucket.setdefault(emo,[]).append(float(v))
+    emo_avg = {e:round(sum(v)/len(v),1) for e,v in bucket.items()}
+    emo_std = {e:round(statistics.pstdev(v),1) for e,v in bucket.items() if len(v)>1}
 
-    for ans in answers:
-        if ans.get("fillerCount"):
-            total_filler += ans["fillerCount"]
-        if ans.get("transcript"):
-            word_count = len(ans["transcript"].split())
-            total_words += word_count
-        assessment = ans.get("assessment")
-        if assessment and isinstance(assessment, dict):
-            r = assessment.get("rating")
-            if r and isinstance(r, int):
-                total_rating += r
-                rating_count += 1
-
-    count_answered = len(answers)
-    avg_rating = total_rating / rating_count if rating_count>0 else 3
-    overall_filler_rate = float(total_filler)/float(total_words) if total_words>0 else 0.0
-
-    # The 6 soft skill sections in order, indexes 5..10 => skill answers
-    skill_order = interview.get("softSkillSections", [
-        "communication","teamwork","problemSolving",
-        "adaptability","leadership","timeManagement"
-    ])
-
-    skillAnalysis = {}
-
+    # ----- per-skill analysis --------------------------------------------------
+    skill_sections = interview.get("softSkillSections",
+        ["communication","teamwork","problemSolving","adaptability","leadership","timeManagement"])
+    skillAnalysis  = {}
     if gemini_model:
-        for i, skill in enumerate(skill_order):
-            q_idx = 5 + i  # question index for that skill
-            ans = next((a for a in answers if a["questionIndex"]==q_idx), None)
+        for i,skill in enumerate(skill_sections):
+            q_idx = tech_cnt + i                                     ##### <NEW>
+            ans   = next((a for a in answers if a["questionIndex"]==q_idx),None)
             if not ans:
-                skillAnalysis[skill] = f"No answer provided for {skill}."
+                skillAnalysis[skill]="No answer provided."
                 continue
-
-            transcript = ans.get("transcript","")
-            rating = 3
-            assess = ans.get("assessment",{})
-            if "rating" in assess:
-                rating = assess["rating"]
-
-            bullet_prompt = f"""
-You are evaluating a candidate's '{skill}' skill.
-The user answered the following question transcript:
-"{transcript}"
-
-We also have a numeric rating: {rating} (1..5 scale).
-Produce a short bullet-point analysis of how the candidate performed specifically in the '{skill}' domain. 
-Focus on strengths, weaknesses, or key takeaways. 
-Return only bullet points (max 5), with no additional commentary or code blocks.
-"""
+            tr   = ans.get("transcript","")
+            rat  = ans.get("assessment",{}).get("rating",3)
             try:
-                resp = gemini_model.generate_content(bullet_prompt)
-                raw_ans = resp.text if resp and resp.text else ""
-                cleaned_ans = remove_code_fences(raw_ans)
-                skillAnalysis[skill] = cleaned_ans
+                txt = gemini_model.generate_content(
+f"""Evaluate {skill}.
+Transcript: \"\"\"{tr}\"\"\" Rating:{rat}/5.
+Give ≤5 bullet points.""").text
+                skillAnalysis[skill]=remove_code_fences(txt)
             except Exception as e:
-                skillAnalysis[skill] = f"Error analyzing {skill}: {str(e)}"
+                skillAnalysis[skill]=f"Error: {e}"
     else:
-        for i, skill in enumerate(skill_order):
-            skillAnalysis[skill] = "Gemini not loaded, no bullet analysis."
+        skillAnalysis = {s:"Gemini not loaded." for s in skill_sections}
 
-    # final summary with overall stats
-    final_summary = ""
-    try:
-        if gemini_model:
-            summary_prompt = f"""
-You are an evaluator of overall performance. 
-We have these stats:
-- total answered: {count_answered}
-- average rating: {avg_rating:.2f} (1..5 scale)
-- filler rate: {overall_filler_rate:.3f}
-- total words: {total_words}
+    # ----- final summary & emotion bullets (same code as before) --------------
+    top = lambda d,k=2:", ".join(f"{e} ({v}%)" for e,v in sorted(d.items(),key=lambda x:x[1],reverse=True)[:k])
+    emo_digest = "No emotion captured." if not emo_avg else f"Dominant → {top(emo_avg)} | Var → {top(emo_std)}"
+    final_summary="Gemini not loaded"; emo_bullets=[]
+    if gemini_model:
+        try:
+            final_summary = gemini_model.generate_content(
+f"""Speech rating {avg_rating}, filler {filler_rt}, words {tot_words}. Emotions: {emo_digest}.
+Neutral = calm, happy/surprise = enthusiastic.
+Write 3–4 sentence assessment.""").text.strip()
+            raw = gemini_model.generate_content(
+f"Avg emotions: {json.dumps(emo_avg)}. Give ≤4 bullets on engagement/stress.").text
+            emo_bullets=[l.lstrip("•- ").strip() for l in raw.splitlines() if l.strip()]
+        except: pass
 
-Write a concise final summary of the candidate’s communication style, confidence, 
-and general soft skills. No code blocks, no extra commentary.
-"""
-            resp = gemini_model.generate_content(summary_prompt)
-            final_summary = resp.text if resp and resp.text else ""
-        else:
-            final_summary = "Gemini not loaded"
-    except Exception as e:
-        final_summary = f"Error generating final summary: {str(e)}"
+    return jsonify(dict(
+        status          = interview.get("status"),
+        completed_at    = interview.get("completed_at"),
+        emotionTimeline = emo_timeline,
+        emotionAverages = emo_avg,
+        emotionStd      = emo_std,
+        emotionAnalysis = emo_bullets,
+        avgRating       = avg_rating,
+        fillerRate      = filler_rt,
+        totalWordsSpoken= tot_words,
+        final_summary   = final_summary,
+        skillAnalysis   = skillAnalysis
+    ))
 
-    return jsonify({
-        "status": status,
-        "completed_at": completed_at,
-        "emotionTimeline": emotion_timeline,
-        "avgRating": avg_rating,
-        "fillerRate": overall_filler_rate,
-        "totalWordsSpoken": total_words,
-        "final_summary": final_summary,
-        "skillAnalysis": skillAnalysis
-    })
+
 
 # ---------------------------------------------------
 # 10) getAssessment => Q & A details for AnswerAssessment page
